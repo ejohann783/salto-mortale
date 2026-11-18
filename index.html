@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0b0b12">
+<link rel="icon" href="icon-192.png">
+<title>Salto Mortale – Latein-Survivors</title>
+<style>
+  :root { --bg:#0b0b12; --panel:#161625; --line:#2c2c48; --text:#e8e8f2; --good:#3ddc84; --bad:#ff5252; --gold:#ffd54a; --hp:#e53935; --xp:#42a5f5; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text); font-family:system-ui, "Segoe UI", sans-serif; overflow:hidden; }
+  html, body { touch-action:none; -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent; overscroll-behavior:none; }
+  canvas { display:block; position:fixed; inset:0; width:100%; height:100%; touch-action:none; }
+  #rotate { position:fixed; left:0; right:0; bottom:0; padding:8px 12px; text-align:center; font-size:13px; background:#000b; color:var(--gold); z-index:4; display:none; pointer-events:none; }
+  @media (pointer:coarse) and (orientation:portrait) { #rotate.on { display:block; } }
+  @media (max-width:700px) {
+    #hud { flex-wrap:wrap; gap:6px 12px; padding:8px 10px; font-size:12px; }
+    .bar { width:42vw; max-width:200px; height:14px; }
+    .card { padding:16px; } .q { font-size:18px; }
+    button.opt { padding:16px 14px; font-size:17px; }
+    .overlay { align-items:flex-start; overflow:auto; }
+  }
+  #hud { position:fixed; top:0; left:0; right:0; padding:10px 14px; display:flex; gap:18px; align-items:center; pointer-events:none; font-size:14px; text-shadow:0 1px 2px #000; }
+  .bar { position:relative; width:200px; height:16px; background:#000a; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .bar > i { position:absolute; inset:0 auto 0 0; width:100%; }
+  #hpFill { background:var(--hp); } #xpFill { background:var(--xp); }
+  .bar span { position:absolute; inset:0; text-align:center; font-size:11px; line-height:15px; }
+  .stat b { color:var(--gold); }
+  .overlay { position:fixed; inset:0; background:#000c; display:none; align-items:center; justify-content:center; padding:16px; z-index:10; }
+  .overlay.show { display:flex; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:22px; width:min(640px,100%); max-height:94vh; overflow:auto; box-shadow:0 10px 40px #000; }
+  h1,h2 { margin:0 0 6px; } h2 { font-size:22px; }
+  .sub { color:#9a9ab8; margin:0 0 16px; font-size:14px; }
+  .grid { display:grid; gap:10px; }
+  button.opt { display:flex; gap:12px; align-items:center; text-align:left; width:100%; padding:12px 14px; background:#1d1d33; color:var(--text); border:1px solid var(--line); border-radius:10px; font-size:16px; cursor:pointer; }
+  button.opt:hover:not(:disabled) { border-color:var(--gold); background:#24243f; }
+  button.opt:disabled { cursor:default; }
+  button.opt kbd { background:#000a; border:1px solid var(--line); border-radius:5px; padding:1px 8px; font-size:13px; color:var(--gold); }
+  button.opt small { color:#9a9ab8; display:block; font-size:12px; }
+  button.opt.right { background:#12402a; border-color:var(--good); }
+  button.opt.wrong { background:#4a1717; border-color:var(--bad); }
+  .q { font-size:20px; margin:4px 0 14px; white-space:pre-line; }
+  .fb { margin-top:12px; min-height:22px; font-size:14px; }
+  .fb.good { color:var(--good); } .fb.bad { color:var(--bad); }
+  #flash { position:fixed; inset:0; pointer-events:none; opacity:0; transition:opacity .5s; z-index:5; }
+  .onlytouch { display:none; } @media (pointer:coarse) { .onlytouch { display:inline; } .onlypc { display:none; } }
+  .big { font-size:15px; padding:12px 22px; border-radius:10px; border:0; background:var(--gold); color:#000; font-weight:700; cursor:pointer; margin-top:16px; }
+  ul.wrongs { margin:6px 0 0; padding-left:18px; font-size:14px; color:#d8d8ea; max-height:180px; overflow:auto; }
+  .kv { display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px solid var(--line); }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="flash"></div>
+<div id="rotate">Tipp: Handy ins Querformat drehen – mehr Platz in der Arena.</div>
+<div id="hud">
+  <div class="bar"><i id="hpFill"></i><span id="hpTxt"></span></div>
+  <div class="bar"><i id="xpFill"></i><span id="xpTxt"></span></div>
+  <div class="stat">Level <b id="lvl">1</b></div>
+  <div class="stat">Zeit <b id="time">0:00</b></div>
+  <div class="stat">Kills <b id="kills">0</b></div>
+</div>
+
+<div class="overlay show" id="start">
+  <div class="card">
+    <h1>Salto Mortale</h1>
+    <p class="sub">Überlebe die untoten Legionäre. Geschossen wird automatisch auf den nächsten Gegner.<br>
+    <span class="onlypc"><b>Bewegen:</b> WASD oder Pfeiltasten.</span>
+    <span class="onlytouch"><b>Bewegen:</b> Finger irgendwo auf den Bildschirm legen und ziehen (Joystick). Loslassen = stehen bleiben.</span><br>
+    Bei jedem Level-Up wählst du ein Upgrade – du bekommst es aber nur, wenn du die Latein-Frage richtig beantwortest
+    (<span class="onlypc">Mausklick oder Tasten 1–4</span><span class="onlytouch">antippen</span>).<br>
+    <span class="onlytouch">Tipp: Handy quer halten.</span></p>
+    <button class="big" id="startBtn">Spiel starten</button>
+  </div>
+</div>
+<div class="overlay" id="modal"><div class="card" id="modalCard"></div></div>
+<div class="overlay" id="over"><div class="card" id="overCard"></div></div>
+
+<script>
+/* ======================================================================
+ * LATEIN-POOL  –  hier für neue Klausuren per Copy-Paste austauschen.
+ * Jeder Eintrag:
+ *   question     : Fragetext (String)
+ *   options      : 2–4 Antwortmöglichkeiten (Strings)
+ *   correctIndex : Index (0–3) der richtigen Antwort in "options"
+ *   explanation  : Erklärung, wird im Game-Over-Screen zum Nachlernen gezeigt
+ * Aktueller Inhalt: Latein-Test 25.11.2026 (Salto 1A/1B), automatisch aus den Lernplaner-Blättern 1–6 erzeugt.
+ * Aktueller Inhalt: Latein-Test 25.11.2026 (Salto 1A/1B), automatisch aus den Lernplaner-Blättern 1–6 erzeugt.
+ * Die Reihenfolge der Optionen wird im Spiel automatisch gemischt.
+ * Mehr als 15 Einträge sind kein Problem.
+ * ====================================================================== */
+const LATIN_POOL = [
+  {"question": "Marcus puellam videt.\nWelches Wort ist das Prädikat?", "options": ["videt", "Marcus", "puellam"], "correctIndex": 0, "explanation": "Das Prädikat ist das Verb. Es steht in der Personalform und endet hier auf -t oder -nt."},
+  {"question": "Puella amicum exspectat.\nWelches Wort ist das Prädikat?", "options": ["exspectat", "Puella", "amicum"], "correctIndex": 0, "explanation": "Das Prädikat ist das Verb. Es steht in der Personalform und endet hier auf -t oder -nt."},
+  {"question": "Amici basilicam intrant.\nWelches Wort ist das Prädikat?", "options": ["basilicam", "intrant", "Amici"], "correctIndex": 1, "explanation": "Das Prädikat ist das Verb. Es steht in der Personalform und endet hier auf -t oder -nt."},
+  {"question": "Claudia Marcum rogat.\nWelches Wort ist das Prädikat?", "options": ["rogat", "Claudia", "Marcum"], "correctIndex": 0, "explanation": "Das Prädikat ist das Verb. Es steht in der Personalform und endet hier auf -t oder -nt."},
+  {"question": "Sulpicia puerum salutat.\nWelches Wort ist das Subjekt?", "options": ["puerum", "Sulpicia", "salutat"], "correctIndex": 1, "explanation": "Das Subjekt steht im Nominativ: Wer oder was salutat? Sulpicia."},
+  {"question": "Puellae amicas exspectant.\nWelches Wort ist das Subjekt?", "options": ["amicas", "exspectant", "Puellae"], "correctIndex": 2, "explanation": "puellae ist Nominativ Plural. exspectant (Plural) passt dazu."},
+  {"question": "Pueri templum vident.\nWelches Wort ist das Subjekt?", "options": ["Pueri", "vident", "templum"], "correctIndex": 0, "explanation": "pueri ist Nominativ Plural, das Verb vident steht auch im Plural."},
+  {"question": "Gaius amicos salutat.\nWelches Wort ist das Subjekt?", "options": ["amicos", "salutat", "Gaius"], "correctIndex": 2, "explanation": "Wer salutat? Gaius (Nominativ)."},
+  {"question": "Marcus amicam audit.\nWelches Wort ist das Subjekt?", "options": ["audit", "amicam", "Marcus"], "correctIndex": 2, "explanation": "Wer audit? Marcus."},
+  {"question": "Marcus puellam videt.\nWelches Wort ist das Objekt?", "options": ["puellam", "videt", "Marcus"], "correctIndex": 0, "explanation": "Wen oder was videt Marcus? puellam (Akkusativ) ist das Objekt."},
+  {"question": "Pueri Marcum non vident.\nWelches Wort ist das Objekt?", "options": ["vident", "Pueri", "non", "Marcum"], "correctIndex": 3, "explanation": "Wen vident die Jungen? Marcum (Akkusativ)."},
+  {"question": "Sulpicia amicum exspectat.\nWelches Wort ist das Objekt?", "options": ["Sulpicia", "amicum", "exspectat"], "correctIndex": 1, "explanation": "Wen exspectat Sulpicia? amicum (Akkusativ)."},
+  {"question": "Gaius amicas salutat.\nWelches Wort ist das Objekt?", "options": ["amicas", "salutat", "Gaius"], "correctIndex": 0, "explanation": "Wen salutat Gaius? amicas (Akkusativ Plural)."},
+  {"question": "Puella puerum non ignorat.\nWelches Wort ist das Objekt?", "options": ["puerum", "ignorat", "non", "Puella"], "correctIndex": 0, "explanation": "Wen ignorat sie nicht? puerum (Akkusativ)."},
+  {"question": "Tum Marcus puellam videt.\nWelches Wort ist weder Subjekt noch Prädikat noch Objekt?", "options": ["videt", "Tum", "Marcus", "puellam"], "correctIndex": 1, "explanation": "tum bedeutet \"dann\" und gehört zu keinem der drei Satzglieder (kein Subjekt, kein Objekt, kein Prädikat)."},
+  {"question": "Puella amicum non exspectat.\nWelches Wort ist weder Subjekt noch Prädikat noch Objekt?", "options": ["exspectat", "amicum", "non", "Puella"], "correctIndex": 2, "explanation": "non bedeutet \"nicht\". Es ist weder Subjekt noch Objekt noch Prädikat."},
+  {"question": "Sed puellae amicas exspectant.\nWelches Wort ist weder Subjekt noch Prädikat noch Objekt?", "options": ["exspectant", "amicas", "Sed", "puellae"], "correctIndex": 2, "explanation": "sed bedeutet \"aber\" und verbindet nur."},
+  {"question": "Puellam Marcus salutat.\nWelches Wort ist das Subjekt?", "options": ["salutat", "Puellam", "Marcus"], "correctIndex": 2, "explanation": "Wer salutat? Marcus (Nominativ). puellam steht am Satzanfang, ist aber trotzdem Objekt (Akkusativ)."},
+  {"question": "Amicum puella exspectat.\nWelches Wort ist das Subjekt?", "options": ["puella", "Amicum", "exspectat"], "correctIndex": 0, "explanation": "amicum endet auf -um (Akkusativ, Objekt), puella ist das Subjekt, auch wenn es nicht am Anfang steht."},
+  {"question": "Marcum Sulpicia rogat.\nWelches Wort ist das Objekt?", "options": ["Sulpicia", "Marcum", "rogat"], "correctIndex": 1, "explanation": "Welches Wort ist das Objekt? Marcum endet auf -um (Akkusativ), obwohl es vorne steht."},
+  {"question": "Welches Subjekt passt zum Prädikat \"exspectant\"?", "options": ["puellae", "puella"], "correctIndex": 0, "explanation": "exspectant ist Plural, also passt puellae (Nominativ Plural)."},
+  {"question": "Welches Subjekt passt zum Prädikat \"salutat\"?", "options": ["amici", "amicus"], "correctIndex": 1, "explanation": "salutat ist Singular, also passt amicus (Nominativ Singular)."},
+  {"question": "Welches Subjekt passt zum Prädikat \"vident\"?", "options": ["puer", "pueri"], "correctIndex": 1, "explanation": "vident ist Plural, also pueri."},
+  {"question": "Was gehört in die Lücke?\nPuella amicum exspectat.\nSubjekt: ___", "options": ["Puella", "Marcus"], "correctIndex": 0, "explanation": "Puella amicum exspectat.\nSubjekt: Puella"},
+  {"question": "Was gehört in die Lücke?\nSulpicia Marcum salutat.\nPrädikat: ___", "options": ["putat", "salutat", "intrat", "adiuvat"], "correctIndex": 1, "explanation": "Sulpicia Marcum salutat.\nPrädikat: salutat"},
+  {"question": "Was gehört in die Lücke?\nPuellam Marcus non videt.\nSubjekt: ___", "options": ["Marcus", "Puella"], "correctIndex": 0, "explanation": "Puellam Marcus non videt.\nSubjekt: Marcus"},
+  {"question": "Übersetze: Marcus puellam videt.", "options": ["Das Mädchen wartet auf den Freund.", "Marcus sieht das Mädchen.", "Marcus begrüßt das Mädchen.", "Das Mädchen hört die Freundin und lacht."], "correctIndex": 1, "explanation": "Marcus puellam videt. = Marcus sieht das Mädchen."},
+  {"question": "Übersetze: Puella amicum exspectat.", "options": ["Das Mädchen freut sich, aber es antwortet nicht.", "Die Mädchen warten auf die Freunde.", "Das Mädchen kennt den Jungen genau.", "Das Mädchen wartet auf den Freund."], "correctIndex": 3, "explanation": "Puella amicum exspectat. = Das Mädchen wartet auf den Freund."},
+  {"question": "Übersetze: Puellam Marcus salutat.", "options": ["Marcus sieht das Mädchen.", "Das Mädchen wartet auf den Freund.", "Die Freunde begrüßen das Mädchen, aber das Mädchen antwortet nicht.", "Marcus begrüßt das Mädchen."], "correctIndex": 3, "explanation": "Puellam Marcus salutat. = Marcus begrüßt das Mädchen."},
+  {"question": "Übersetze: Pueri Marcum non vident neque salutant.", "options": ["Die Jungen sehen die Tempel.", "Die Freunde begrüßen das Mädchen, aber das Mädchen antwortet nicht.", "Die Jungen sehen die Mädchen vielleicht nicht.", "Die Jungen sehen Marcus nicht und begrüßen ihn nicht."], "correctIndex": 3, "explanation": "Pueri Marcum non vident neque salutant. = Die Jungen sehen Marcus nicht und begrüßen ihn nicht."},
+  {"question": "Was gehört in die Lücke?\nAkkusativ Plural der a-Deklination: puella → puell___", "options": ["as", "amicas", "um", "puellas"], "correctIndex": 0, "explanation": "Akkusativ Plural der a-Deklination: puella → puellas"},
+  {"question": "Was gehört in die Lücke?\nAkkusativ Plural der o-Deklination (Neutrum): templum → templ___", "options": ["a", "as", "um", "mē"], "correctIndex": 0, "explanation": "Akkusativ Plural der o-Deklination (Neutrum): templum → templa"},
+  {"question": "Was gehört in die Lücke?\nBilde den Akkusativ Singular: puella → ___", "options": ["basilicam", "puellam", "fortunam", "puerum"], "correctIndex": 1, "explanation": "Bilde den Akkusativ Singular: puella → puellam"},
+  {"question": "Was gehört in die Lücke?\nBilde den Akkusativ Plural: amica → ___", "options": ["amicos", "puellas", "amicas", "templa"], "correctIndex": 2, "explanation": "Bilde den Akkusativ Plural: amica → amicas"},
+  {"question": "Was gehört in die Lücke?\nBilde den Akkusativ Singular: basilica → ___", "options": ["puellam", "fortunam", "basilicam", "amicum"], "correctIndex": 2, "explanation": "Bilde den Akkusativ Singular: basilica → basilicam"},
+  {"question": "Was gehört in die Lücke?\nBilde den Akkusativ Singular: fortuna → ___", "options": ["fortunam", "basilicam", "puellam", "amicum"], "correctIndex": 0, "explanation": "Bilde den Akkusativ Singular: fortuna → fortunam"},
+  {"question": "Was gehört in die Lücke?\nBilde den Akkusativ Singular: amicus → ___", "options": ["puellam", "locum", "puerum", "amicum"], "correctIndex": 3, "explanation": "Bilde den Akkusativ Singular: amicus → amicum"},
+  {"question": "Was gehört in die Lücke?\nBilde den Akkusativ Singular: puer → ___", "options": ["puellam", "locum", "amicum", "puerum"], "correctIndex": 3, "explanation": "Bilde den Akkusativ Singular: puer → puerum"},
+  {"question": "Was gehört in die Lücke?\nBilde den Akkusativ Singular: locus → ___", "options": ["puerum", "amicum", "puellam", "locum"], "correctIndex": 3, "explanation": "Bilde den Akkusativ Singular: locus → locum"},
+  {"question": "Was gehört in die Lücke?\nBilde den Akkusativ Plural: amicus → ___", "options": ["puellas", "templa", "amicos", "amicas"], "correctIndex": 2, "explanation": "Bilde den Akkusativ Plural: amicus → amicos"},
+  {"question": "Was gehört in die Lücke?\nBilde den Akkusativ Plural: templum → ___", "options": ["amicas", "amicos", "puellas", "templa"], "correctIndex": 3, "explanation": "Bilde den Akkusativ Plural: templum → templa"},
+  {"question": "Was gehört in die Lücke?\nBilde den Akkusativ Plural: verbum → ___", "options": ["templa", "amicas", "amicos", "verba"], "correctIndex": 3, "explanation": "Bilde den Akkusativ Plural: verbum → verba"},
+  {"question": "Was gehört in die Lücke?\nBilde den Akkusativ Plural: puella → ___", "options": ["amicos", "amicas", "puellas", "templa"], "correctIndex": 2, "explanation": "Bilde den Akkusativ Plural: puella → puellas"},
+  {"question": "Was gehört in die Lücke?\nBilde den Nominativ Singular: puellam → ___", "options": ["puella", "amicus", "puer", "templa"], "correctIndex": 0, "explanation": "Bilde den Nominativ Singular: puellam → puella"},
+  {"question": "Was gehört in die Lücke?\nBilde den Nominativ Plural: amicos → ___", "options": ["verba", "amici", "pueri", "loci"], "correctIndex": 1, "explanation": "Bilde den Nominativ Plural: amicos → amici"},
+  {"question": "Was gehört in die Lücke?\nBilde den Nominativ Singular: amicum → ___", "options": ["puerum", "puer", "amicus", "puella"], "correctIndex": 2, "explanation": "Bilde den Nominativ Singular: amicum → amicus"},
+  {"question": "Was gehört in die Lücke?\nBilde den Nominativ Singular: puerum → ___", "options": ["puer", "loci", "amicus", "puella"], "correctIndex": 0, "explanation": "Bilde den Nominativ Singular: puerum → puer"},
+  {"question": "\"puellam\": Ist das ein Akkusativ?", "options": ["möglicher Akkusativ", "kein Akkusativ"], "correctIndex": 0, "explanation": "Endung -am: Akkusativ Singular der a-Deklination."},
+  {"question": "\"tum\": Ist das ein Akkusativ?", "options": ["möglicher Akkusativ", "kein Akkusativ"], "correctIndex": 1, "explanation": "tum bedeutet \"dann\". Es ist ein Adverb und endet nur zufällig auf -m."},
+  {"question": "\"amicus\": Ist das ein Akkusativ?", "options": ["möglicher Akkusativ", "kein Akkusativ"], "correctIndex": 1, "explanation": "-us ist Nominativ Singular, kein Akkusativ."},
+  {"question": "\"iam\": Ist das ein Akkusativ?", "options": ["kein Akkusativ", "möglicher Akkusativ"], "correctIndex": 0, "explanation": "iam bedeutet \"schon\" und ist ein Adverb, kein Akkusativ."},
+  {"question": "\"puellas\": Ist das ein Akkusativ?", "options": ["möglicher Akkusativ", "kein Akkusativ"], "correctIndex": 0, "explanation": "Endung -as: Akkusativ Plural der a-Deklination."},
+  {"question": "\"puellae\": Ist das ein Akkusativ?", "options": ["kein Akkusativ", "möglicher Akkusativ"], "correctIndex": 0, "explanation": "-ae ist Nominativ Plural (oder Genitiv/Dativ Singular), kein Akkusativ."},
+  {"question": "\"amicos\": Ist das ein Akkusativ?", "options": ["möglicher Akkusativ", "kein Akkusativ"], "correctIndex": 0, "explanation": "Endung -os: Akkusativ Plural der o-Deklination."},
+  {"question": "\"etiam\": Ist das ein Akkusativ?", "options": ["kein Akkusativ", "möglicher Akkusativ"], "correctIndex": 0, "explanation": "etiam bedeutet \"auch\", ein Adverb. Es endet auf -am, ist aber keine a-Deklination."},
+  {"question": "\"amici\": Ist das ein Akkusativ?", "options": ["möglicher Akkusativ", "kein Akkusativ"], "correctIndex": 1, "explanation": "-i ist Nominativ Plural."},
+  {"question": "\"templum\": Ist das ein Akkusativ?", "options": ["kein Akkusativ", "möglicher Akkusativ"], "correctIndex": 1, "explanation": "Neutrum: Nominativ und Akkusativ sind gleich. Ob es Akkusativ ist, zeigt der Satz."},
+  {"question": "\"tandem\": Ist das ein Akkusativ?", "options": ["möglicher Akkusativ", "kein Akkusativ"], "correctIndex": 1, "explanation": "tandem bedeutet \"endlich\", ein Adverb."},
+  {"question": "\"basilicam\": Ist das ein Akkusativ?", "options": ["kein Akkusativ", "möglicher Akkusativ"], "correctIndex": 1, "explanation": "Endung -am: Akkusativ Singular."},
+  {"question": "Marcus amicum exspectat.\nWelches Wort steht im Akkusativ?", "options": ["exspectat", "amicum", "Marcus"], "correctIndex": 1, "explanation": "amicum endet auf -um (Akkusativ Singular)."},
+  {"question": "Sulpicia amicas salutat.\nWelches Wort steht im Akkusativ?", "options": ["Sulpicia", "amicas", "salutat"], "correctIndex": 1, "explanation": "amicas endet auf -as (Akkusativ Plural)."},
+  {"question": "Puella templum videt.\nWelches Wort steht im Akkusativ?", "options": ["videt", "Puella", "templum"], "correctIndex": 2, "explanation": "Wen oder was sieht das Mädchen? templum (Akkusativ)."},
+  {"question": "Pueri tum puellam vident.\nWelches Wort steht im Akkusativ?", "options": ["vident", "tum", "puellam", "Pueri"], "correctIndex": 2, "explanation": "tum ist ein Adverb, puellam ist Akkusativ."},
+  {"question": "Was gehört in die Lücke?\nGaius ___ salutat. (mich)\n(Akkusativ von ego.)", "options": ["as", "am", "mē", "um"], "correctIndex": 2, "explanation": "Gaius mē salutat. (mich)"},
+  {"question": "Finde die richtige Lösung:\nMarcus puella videt.\n(Ein Fehler beim Objekt.)", "options": ["Puellae amicos exspectant.", "Marcus puellam videt.", "Amici puellam exspectant.", "Marcus amicam salūtat."], "correctIndex": 1, "explanation": "Richtig: Marcus puellam videt."},
+  {"question": "Finde die richtige Lösung:\nPuella amicus exspectat.\n(Ein Fehler beim Objekt.)", "options": ["Marcus amicam salūtat.", "Amici puellas salūtant.", "Puella amicum exspectat.", "Puer amicam salutat."], "correctIndex": 2, "explanation": "Richtig: Puella amicum exspectat."},
+  {"question": "Finde die richtige Lösung:\nGaius amici salutat.\n(Ein Fehler beim Objekt (Plural).)", "options": ["Puer amicam salutat.", "Puellae amicos exspectant.", "Gaius amicos salutat.", "Marcus puellam videt."], "correctIndex": 2, "explanation": "Richtig: Gaius amicos salutat."},
+  {"question": "Finde die richtige Lösung:\nSulpicia ad basilica properat.\n(ad verlangt den Akkusativ.)", "options": ["Puer amicam salutat.", "Gaius amicos salutat.", "Pueri templa vident.", "Sulpicia ad basilicam properat."], "correctIndex": 3, "explanation": "Richtig: Sulpicia ad basilicam properat."},
+  {"question": "Übersetze: Sulpicia ad basilicam properat.", "options": ["Marcus eilt immer zur Basilika.", "Gaius steht vor der Basilika und fragt den Jungen.", "Sulpicia ist endlich da.", "Sulpicia eilt zur Basilika."], "correctIndex": 3, "explanation": "Sulpicia ad basilicam properat. = Sulpicia eilt zur Basilika."},
+  {"question": "Übersetze: Marcus ante templum stat.", "options": ["Marcus steht vor dem Tempel.", "Gaius steht vor der Basilika und fragt den Jungen.", "Marcus wartet auf Sulpicia.", "Marcus eilt immer zur Basilika."], "correctIndex": 0, "explanation": "Marcus ante templum stat. = Marcus steht vor dem Tempel."},
+  {"question": "Übersetze: Puella puerum non ignorat.", "options": ["Die Jungen sehen die Mädchen vielleicht nicht.", "Das Mädchen wartet auf den Freund.", "Das Mädchen kennt den Jungen genau.", "Marcus sieht das Mädchen."], "correctIndex": 2, "explanation": "Puella puerum non ignorat. = Das Mädchen kennt den Jungen genau."},
+  {"question": "Übersetze: Gaius amicos videt.", "options": ["Die Freunde sehen plötzlich den Tempel.", "Die Mädchen warten auf die Freunde.", "Dann begrüßen die Mädchen die Freunde.", "Gaius sieht die Freunde."], "correctIndex": 3, "explanation": "Gaius amicos videt. = Gaius sieht die Freunde."},
+  {"question": "Übersetze: Puer puellam saepe adiuvat.", "options": ["Marcus sieht das Mädchen.", "Der Junge hilft dem Mädchen oft.", "Die Freunde begrüßen das Mädchen, aber das Mädchen antwortet nicht.", "Gaius steht vor der Basilika und fragt den Jungen."], "correctIndex": 1, "explanation": "Puer puellam saepe adiuvat. = Der Junge hilft dem Mädchen oft."},
+  {"question": "Übersetze: Amici templum subito vident.", "options": ["Die Jungen sehen die Tempel.", "Die Jungen sehen die Mädchen vielleicht nicht.", "Die Mädchen warten auf die Freunde.", "Die Freunde sehen plötzlich den Tempel."], "correctIndex": 3, "explanation": "Amici templum subito vident. = Die Freunde sehen plötzlich den Tempel."},
+  {"question": "Übersetze: Puella amicam audit et ridet.", "options": ["Die Freunde begrüßen das Mädchen, aber das Mädchen antwortet nicht.", "Das Mädchen hört die Freundin und lacht.", "Das Mädchen wartet auf den Freund.", "Die Jungen sehen die Mädchen vielleicht nicht."], "correctIndex": 1, "explanation": "Puella amicam audit et ridet. = Das Mädchen hört die Freundin und lacht."},
+  {"question": "Übersetze: Marcus semper ad basilicam properat.", "options": ["Marcus eilt immer zur Basilika.", "Gaius steht vor der Basilika und fragt den Jungen.", "Sulpicia eilt zur Basilika.", "Marcus wartet auf Sulpicia."], "correctIndex": 0, "explanation": "Marcus semper ad basilicam properat. = Marcus eilt immer zur Basilika."},
+  {"question": "Übersetze: Tum puellae amicos salutant.", "options": ["Dann begrüßen die Mädchen die Freunde.", "Die Freunde begrüßen das Mädchen, aber das Mädchen antwortet nicht.", "Die Mädchen warten auf die Freunde.", "Das Mädchen hört die Freundin und lacht."], "correctIndex": 0, "explanation": "Tum puellae amicos salutant. = Dann begrüßen die Mädchen die Freunde."},
+  {"question": "Übersetze: Sulpicia Marcum exspectat, sed Marcus non adest.", "options": ["Die Freunde begrüßen das Mädchen, aber das Mädchen antwortet nicht.", "Sulpicia wartet auf Marcus, aber Marcus ist nicht da.", "Marcus wartet auf Sulpicia.", "Sulpicia ist endlich da."], "correctIndex": 1, "explanation": "Sulpicia Marcum exspectat, sed Marcus non adest. = Sulpicia wartet auf Marcus, aber Marcus ist nicht da."},
+  {"question": "Übersetze: Pueri fortasse puellas non vident.", "options": ["Die Jungen sehen die Tempel.", "Die Freunde begrüßen das Mädchen, aber das Mädchen antwortet nicht.", "Die Jungen sehen Marcus nicht und begrüßen ihn nicht.", "Die Jungen sehen die Mädchen vielleicht nicht."], "correctIndex": 3, "explanation": "Pueri fortasse puellas non vident. = Die Jungen sehen die Mädchen vielleicht nicht."},
+  {"question": "Übersetze: Gaius ante basilicam stat et puerum rogat.", "options": ["Die Jungen sehen Marcus nicht und begrüßen ihn nicht.", "Marcus steht vor dem Tempel.", "Gaius steht vor der Basilika und fragt den Jungen.", "Das Mädchen kennt den Jungen genau."], "correctIndex": 2, "explanation": "Gaius ante basilicam stat et puerum rogat. = Gaius steht vor der Basilika und fragt den Jungen."},
+  {"question": "Welche Übersetzung passt?\nPuella puerum videt.", "options": ["Das Mädchen sieht den Jungen.", "Der Junge sieht das Mädchen.", "Die Mädchen sehen den Jungen."], "correctIndex": 0, "explanation": "puella ist das Subjekt (Nominativ), puerum das Objekt (Akkusativ), videt steht im Singular."},
+  {"question": "Welche Übersetzung passt?\nPueri puellam salutant.", "options": ["Der Junge begrüßt die Mädchen.", "Das Mädchen begrüßt die Jungen.", "Die Jungen begrüßen das Mädchen."], "correctIndex": 2, "explanation": "pueri und salutant stehen im Plural, puellam ist Akkusativ Singular."},
+  {"question": "Welche Übersetzung passt?\nAmicum amica exspectat.", "options": ["Die Freundin wartet auf den Freund.", "Die Freundinnen warten auf den Freund.", "Der Freund wartet auf die Freundin."], "correctIndex": 0, "explanation": "amicum endet auf -um (Akkusativ, Objekt), amica ist das Subjekt. Die Wortstellung ist frei."},
+  {"question": "Welche Übersetzung passt?\nMarcum puellae rogant.", "options": ["Marcus fragt die Mädchen.", "Das Mädchen fragt Marcus.", "Die Mädchen fragen Marcus."], "correctIndex": 2, "explanation": "puellae ist hier Nominativ Plural (rogant steht im Plural), Marcum ist Akkusativ."},
+  {"question": "Welche Übersetzung passt?\nPuer templa videt.", "options": ["Der Junge sieht den Tempel.", "Der Junge sieht die Tempel.", "Die Tempel sehen den Jungen."], "correctIndex": 1, "explanation": "templa ist Akkusativ Plural (Neutrum, Endung -a)."},
+  {"question": "Welche Übersetzung passt?\nSed amici non adsunt.", "options": ["Aber der Freund ist nicht da.", "Aber die Freunde sind nicht da.", "Sondern die Freunde sehen nicht."], "correctIndex": 1, "explanation": "adsunt ist Plural (sie sind da), sed heißt hier \"aber\"."},
+  {"question": "Was gehört in die Lücke?\nMarcus ___ videt.\n(Setze das Mädchen in der richtigen Form ein (Akkusativ).)", "options": ["puellam", "basilicam", "amicam", "fortunam"], "correctIndex": 0, "explanation": "Marcus puellam videt."},
+  {"question": "Was gehört in die Lücke?\nPueri ___ salutant.\n(Setze die Freunde in der richtigen Form ein (Akkusativ).)", "options": ["amicam", "intrat", "amicos", "os"], "correctIndex": 2, "explanation": "Pueri amicos salutant."},
+  {"question": "Finde die richtige Lösung:\nAmici puella exspectant.\n(Ein Fehler beim Objekt.)", "options": ["Amici puellas salūtant.", "Amici puellam exspectant.", "Marcus puellam videt.", "Puellae amicos exspectant."], "correctIndex": 1, "explanation": "Richtig: Amici puellam exspectant."},
+  {"question": "Finde die richtige Lösung:\nPuer amica salutat.\n(Ein Fehler beim Objekt.)", "options": ["Gaius amicos salutat.", "Marcus puellam videt.", "Puer amicam salutat.", "Marcus amicam salūtat."], "correctIndex": 2, "explanation": "Richtig: Puer amicam salutat."},
+  {"question": "Was heißt 'properāre'?", "options": ["fragen", "lachen", "eilen", "stehen"], "correctIndex": 2, "explanation": "properāre = eilen / sich beeilen / beeilen"},
+  {"question": "Was heißt 'tandem'?", "options": ["oft", "plötzlich", "endlich", "der Junge"], "correctIndex": 2, "explanation": "tandem = endlich"},
+  {"question": "Was heißt 'adest'?", "options": ["mich", "er ist da", "schon", "endlich"], "correctIndex": 1, "explanation": "adest = er ist da / sie ist da / es ist da"},
+  {"question": "Was heißt 'lātrīnae'?", "options": ["die Toiletten", "das Wort", "das Mädchen", "endlich"], "correctIndex": 0, "explanation": "lātrīnae = die Toiletten / Toiletten / die Latrinen"},
+  {"question": "Was heißt 'olēre'?", "options": ["riechen", "eintreten", "sich hinsetzen", "begrüßen"], "correctIndex": 0, "explanation": "olēre = riechen / stinken"},
+  {"question": "Was heißt 'sed'?", "options": ["immer", "aber", "der Tempel", "oft"], "correctIndex": 1, "explanation": "sed = aber / sondern"},
+  {"question": "Was heißt 'gaudēre'?", "options": ["sich freuen", "glauben", "riechen", "hören"], "correctIndex": 0, "explanation": "gaudēre = sich freuen / freuen"},
+  {"question": "Was heißt 'cōnsīdere'?", "options": ["lachen", "hören", "glauben", "sich hinsetzen"], "correctIndex": 3, "explanation": "cōnsīdere = sich hinsetzen / hinsetzen"},
+  {"question": "Was heißt 'locus'?", "options": ["trotzdem", "schon", "und nicht", "der Ort"], "correctIndex": 3, "explanation": "locus = der Ort / Ort / ein Ort"},
+  {"question": "Was heißt 'quis'?", "options": ["immer", "wer", "oft", "wo"], "correctIndex": 1, "explanation": "quis = wer"},
+  {"question": "Was heißt 'tum'?", "options": ["wo", "das Wort", "dann", "und nicht"], "correctIndex": 2, "explanation": "tum = dann"},
+  {"question": "Was heißt 'intellegere'?", "options": ["eintreten", "verstehen", "sich hinsetzen", "diskutieren"], "correctIndex": 1, "explanation": "intellegere = verstehen"},
+  {"question": "Was heißt 'amīcus'?", "options": ["der Freund", "dann", "schon", "plötzlich"], "correctIndex": 0, "explanation": "amīcus = der Freund / Freund / ein Freund"},
+  {"question": "Was heißt 'amīca'?", "options": ["und nicht", "die Freundin", "immer", "der Freund"], "correctIndex": 1, "explanation": "amīca = die Freundin / Freundin / eine Freundin"},
+  {"question": "Was heißt 'rīdēre'?", "options": ["sich freuen", "stehen", "fragen", "lachen"], "correctIndex": 3, "explanation": "rīdēre = lachen"},
+  {"question": "Was heißt 'etiam'?", "options": ["die Basilika", "immer", "plötzlich", "auch"], "correctIndex": 3, "explanation": "etiam = auch"},
+  {"question": "Was heißt 'disputāre'?", "options": ["diskutieren", "lachen", "sehen", "warten"], "correctIndex": 0, "explanation": "disputāre = diskutieren"},
+  {"question": "Was heißt 'puella'?", "options": ["und", "das Mädchen", "der Ort", "die Toiletten"], "correctIndex": 1, "explanation": "puella = das Mädchen / das Madchen / Mädchen"},
+  {"question": "Was heißt 'intrāre'?", "options": ["sehen", "riechen", "eintreten", "schweigen"], "correctIndex": 2, "explanation": "intrāre = eintreten / betreten"},
+  {"question": "Was heißt 'tacēre'?", "options": ["diskutieren", "hören", "warten", "schweigen"], "correctIndex": 3, "explanation": "tacēre = schweigen"},
+  {"question": "Was heißt 'respondēre'?", "options": ["diskutieren", "stehen", "sich freuen", "antworten"], "correctIndex": 3, "explanation": "respondēre = antworten"},
+  {"question": "Was heißt 'fortāsse'?", "options": ["wer", "vielleicht", "trotzdem", "weil"], "correctIndex": 1, "explanation": "fortāsse = vielleicht"},
+  {"question": "Was heißt 'audīre'?", "options": ["hören", "schweigen", "eintreten", "sich hinsetzen"], "correctIndex": 0, "explanation": "audīre = hören / horen"},
+  {"question": "Was heißt 'quod'?", "options": ["er ist da", "trotzdem", "weil", "das Glück"], "correctIndex": 2, "explanation": "quod = weil"},
+  {"question": "Was heißt 'verbum'?", "options": ["immer", "das Mädchen", "was", "das Wort"], "correctIndex": 3, "explanation": "verbum = das Wort / Wort / ein Wort"},
+  {"question": "Was heißt 'saepe'?", "options": ["vielleicht", "die Freundin", "oft", "dann"], "correctIndex": 2, "explanation": "saepe = oft"},
+  {"question": "Was heißt 'putāre'?", "options": ["eilen", "sich hinsetzen", "begrüßen", "glauben"], "correctIndex": 3, "explanation": "putāre = glauben / meinen / halten für"},
+  {"question": "Was heißt 'neque'?", "options": ["und nicht", "wer", "immer", "der Ort"], "correctIndex": 0, "explanation": "neque = und nicht"},
+  {"question": "Was heißt 'fortūna'?", "options": ["das Glück", "mich", "wo", "der Ort"], "correctIndex": 0, "explanation": "fortūna = das Glück / das Gluck / Glück"},
+  {"question": "Was heißt 'subitō'?", "options": ["plötzlich", "endlich", "das Mädchen", "oft"], "correctIndex": 0, "explanation": "subitō = plötzlich / plotzlich"},
+  {"question": "Was heißt 'semper'?", "options": ["die Basilika", "er ist da", "was", "immer"], "correctIndex": 3, "explanation": "semper = immer"},
+  {"question": "Was heißt 'adiuvāre'?", "options": ["begrüßen", "helfen", "sehen", "lachen"], "correctIndex": 1, "explanation": "adiuvāre = helfen"},
+  {"question": "Was heißt 'ubī'?", "options": ["das Glück", "vor", "die Basilika", "wo"], "correctIndex": 3, "explanation": "ubī = wo / als"},
+  {"question": "Was heißt 'vidēre'?", "options": ["antworten", "sehen", "diskutieren", "fragen"], "correctIndex": 1, "explanation": "vidēre = sehen"},
+  {"question": "Was heißt 'ante'?", "options": ["vor", "dann", "mich", "wer"], "correctIndex": 0, "explanation": "ante = vor"},
+  {"question": "Was heißt 'templum'?", "options": ["der Tempel", "immer", "das Mädchen", "oft"], "correctIndex": 0, "explanation": "templum = der Tempel / Tempel / ein Tempel"},
+  {"question": "Was heißt 'stāre'?", "options": ["eilen", "begrüßen", "stehen", "hören"], "correctIndex": 2, "explanation": "stāre = stehen"},
+  {"question": "Was heißt 'exspectāre'?", "options": ["riechen", "warten", "stehen", "eintreten"], "correctIndex": 1, "explanation": "exspectāre = warten / warten auf / erwarten"},
+  {"question": "Was heißt 'iam'?", "options": ["die Toiletten", "schon", "die Freundin", "weil"], "correctIndex": 1, "explanation": "iam = schon"},
+  {"question": "Was heißt 'puer'?", "options": ["er ist da", "schon", "plötzlich", "der Junge"], "correctIndex": 3, "explanation": "puer = der Junge / Junge / ein Junge"},
+  {"question": "Was heißt 'tamen'?", "options": ["aber", "trotzdem", "vor", "immer"], "correctIndex": 1, "explanation": "tamen = trotzdem"},
+  {"question": "Was heißt 'atque'?", "options": ["der Ort", "was", "die Basilika", "und"], "correctIndex": 3, "explanation": "atque = und"},
+  {"question": "Was heißt 'salūtāre'?", "options": ["begrüßen", "glauben", "eintreten", "fragen"], "correctIndex": 0, "explanation": "salūtāre = begrüßen / begrußen / grüßen"},
+  {"question": "Was heißt 'rogāre'?", "options": ["fragen", "kommen", "hören", "riechen"], "correctIndex": 0, "explanation": "rogāre = fragen / bitten"},
+  {"question": "Was heißt 'quid'?", "options": ["vielleicht", "und", "was", "der Freund"], "correctIndex": 2, "explanation": "quid = was"},
+  {"question": "Was heißt 'mē'?", "options": ["mich", "die Basilika", "endlich", "der Tempel"], "correctIndex": 0, "explanation": "mē = mich"},
+  {"question": "Was heißt 'basilica'?", "options": ["weil", "trotzdem", "die Basilika", "immer"], "correctIndex": 2, "explanation": "basilica = die Basilika / Basilika / eine Basilika"},
+  {"question": "Was heißt 'venīre'?", "options": ["kommen", "verstehen", "begrüßen", "antworten"], "correctIndex": 0, "explanation": "venīre = kommen"},
+  {"question": "Welches Genus hat \"puella\"?", "options": ["weiblich (f.)", "sächlich (n.)", "männlich (m.)"], "correctIndex": 0, "explanation": "puella endet auf -a und ist weiblich (f.): das Mädchen."},
+  {"question": "Welches Genus hat \"amīcus\"?", "options": ["weiblich (f.)", "männlich (m.)", "sächlich (n.)"], "correctIndex": 1, "explanation": "amīcus (m.): der Freund. Die Freundin heißt amīca (f.)."},
+  {"question": "Welches Genus hat \"amīca\"?", "options": ["weiblich (f.)", "männlich (m.)", "sächlich (n.)"], "correctIndex": 0, "explanation": "amīca (f.): die Freundin."},
+  {"question": "Welches Genus hat \"templum\"?", "options": ["männlich (m.)", "sächlich (n.)", "weiblich (f.)"], "correctIndex": 1, "explanation": "templum (n.): das Neutrum erkennst du an -um im Nominativ."},
+  {"question": "Welches Genus hat \"puer\"?", "options": ["männlich (m.)", "sächlich (n.)", "weiblich (f.)"], "correctIndex": 0, "explanation": "puer (m.): der Junge."},
+  {"question": "Welches Genus hat \"basilica\"?", "options": ["männlich (m.)", "weiblich (f.)", "sächlich (n.)"], "correctIndex": 1, "explanation": "basilica (f.): die Basilika, a-Deklination."},
+  {"question": "Welches Genus hat \"verbum\"?", "options": ["weiblich (f.)", "männlich (m.)", "sächlich (n.)"], "correctIndex": 2, "explanation": "verbum (n.): das Wort."},
+  {"question": "Welches Genus hat \"locus\"?", "options": ["männlich (m.)", "sächlich (n.)", "weiblich (f.)"], "correctIndex": 0, "explanation": "locus (m.): der Ort."},
+  {"question": "Welches Genus hat \"fortūna\"?", "options": ["sächlich (n.)", "weiblich (f.)", "männlich (m.)"], "correctIndex": 1, "explanation": "fortūna (f.): das Glück, a-Deklination."},
+  {"question": "Übersetze: Teil 1, Text übersetzen (Satz für Satz): Marcus ante templum stat.", "options": ["Marcus wartet auf Sulpicia.", "Gaius steht vor der Basilika und fragt den Jungen.", "Die Jungen sehen die Tempel.", "Marcus steht vor dem Tempel."], "correctIndex": 3, "explanation": "Teil 1, Text übersetzen (Satz für Satz): Marcus ante templum stat. = Marcus steht vor dem Tempel."},
+  {"question": "Übersetze: Teil 1, Text übersetzen (Satz für Satz): Marcus Sulpiciam exspectat.", "options": ["Sulpicia wartet auf Marcus, aber Marcus ist nicht da.", "Marcus begrüßt das Mädchen.", "Marcus wartet auf Sulpicia.", "Das Mädchen wartet auf den Freund."], "correctIndex": 2, "explanation": "Teil 1, Text übersetzen (Satz für Satz): Marcus Sulpiciam exspectat. = Marcus wartet auf Sulpicia."},
+  {"question": "Übersetze: Teil 1, Text übersetzen (Satz für Satz): Sulpicia tandem adest.", "options": ["Sulpicia ist endlich da.", "Sulpicia wartet auf Marcus, aber Marcus ist nicht da.", "Sulpicia eilt zur Basilika.", "Marcus wartet auf Sulpicia."], "correctIndex": 0, "explanation": "Teil 1, Text übersetzen (Satz für Satz): Sulpicia tandem adest. = Sulpicia ist endlich da."},
+  {"question": "Übersetze: Teil 1, Text übersetzen (Satz für Satz): Marcus puellam salūtat.", "options": ["Das Mädchen hört die Freundin und lacht.", "Marcus begrüßt das Mädchen.", "Das Mädchen wartet auf den Freund.", "Marcus sieht das Mädchen."], "correctIndex": 1, "explanation": "Teil 1, Text übersetzen (Satz für Satz): Marcus puellam salūtat. = Marcus begrüßt das Mädchen."},
+  {"question": "Übersetze: Teil 1, Text übersetzen (Satz für Satz): Puella gaudet, sed non respondet.", "options": ["Das Mädchen hört die Freundin und lacht.", "Marcus sieht das Mädchen.", "Das Mädchen freut sich, aber es antwortet nicht.", "Die Freunde begrüßen das Mädchen, aber das Mädchen antwortet nicht."], "correctIndex": 2, "explanation": "Teil 1, Text übersetzen (Satz für Satz): Puella gaudet, sed non respondet. = Das Mädchen freut sich, aber es antwortet nicht."},
+  {"question": "Übersetze: Teil 1, Text übersetzen (Satz für Satz): Marcus tacet.", "options": ["Marcus sieht das Mädchen.", "Marcus begrüßt das Mädchen.", "Marcus schweigt.", "Marcus wartet auf Sulpicia."], "correctIndex": 2, "explanation": "Teil 1, Text übersetzen (Satz für Satz): Marcus tacet. = Marcus schweigt."},
+  {"question": "Teil 2, Fragen zum Text:\nMarcus ante templum stat. Marcus Sulpiciam exspectat. Sulpicia tandem adest. Marcus puellam salūtat. Puella gaudet, sed non respondet. Marcus tacet.\nWo steht Marcus?", "options": ["In der Latrine.", "Vor der Basilika.", "Vor dem Tempel."], "correctIndex": 2, "explanation": "ante templum stat = er steht vor dem Tempel."},
+  {"question": "Teil 2, Fragen zum Text:\nMarcus ante templum stat. Marcus Sulpiciam exspectat. Sulpicia tandem adest. Marcus puellam salūtat. Puella gaudet, sed non respondet. Marcus tacet.\nAuf wen wartet Marcus?", "options": ["Auf den Jungen.", "Auf Gaius.", "Auf Sulpicia."], "correctIndex": 2, "explanation": "Marcus Sulpiciam exspectat: Sulpiciam ist das Objekt."},
+  {"question": "Teil 2, Fragen zum Text:\nMarcus ante templum stat. Marcus Sulpiciam exspectat. Sulpicia tandem adest. Marcus puellam salūtat. Puella gaudet, sed non respondet. Marcus tacet.\nWelches Wort im Text ist ein Akkusativ?", "options": ["Marcus", "Sulpicia", "Sulpiciam"], "correctIndex": 2, "explanation": "Endung -am: Akkusativ Singular, Objekt von exspectat."},
+  {"question": "Teil 2, Fragen zum Text:\nMarcus ante templum stat. Marcus Sulpiciam exspectat. Sulpicia tandem adest. Marcus puellam salūtat. Puella gaudet, sed non respondet. Marcus tacet.\nWer ist das Subjekt im Satz \"Marcus puellam salūtat.\"?", "options": ["salūtat", "puellam", "Marcus"], "correctIndex": 2, "explanation": "Wer begrüßt? Marcus (Nominativ)."},
+  {"question": "Teil 2, Fragen zum Text:\nMarcus ante templum stat. Marcus Sulpiciam exspectat. Sulpicia tandem adest. Marcus puellam salūtat. Puella gaudet, sed non respondet. Marcus tacet.\nWas macht das Mädchen?", "options": ["Es schweigt und lacht.", "Es freut sich, antwortet aber nicht.", "Es hilft Marcus."], "correctIndex": 1, "explanation": "puella gaudet, sed non respondet."},
+  {"question": "Teil 3, Wörter einordnen: Welches Genus hat \"puer\"?", "options": ["weiblich (f.)", "sächlich (n.)", "männlich (m.)"], "correctIndex": 2, "explanation": "männlich (m.)"},
+  {"question": "Teil 3, Wörter einordnen: Welches Genus hat \"basilica\"?", "options": ["weiblich (f.)", "sächlich (n.)", "männlich (m.)"], "correctIndex": 0, "explanation": "weiblich (f.)"},
+  {"question": "Teil 3, Wörter einordnen: Welches Genus hat \"verbum\"?", "options": ["sächlich (n.)", "männlich (m.)", "weiblich (f.)"], "correctIndex": 0, "explanation": "sächlich (n.)"},
+  {"question": "Teil 3, Wörter einordnen: Welches Genus hat \"amīca\"?", "options": ["männlich (m.)", "weiblich (f.)", "sächlich (n.)"], "correctIndex": 1, "explanation": "weiblich (f.)"},
+  {"question": "Teil 3, Wörter einordnen: Welches Genus hat \"templum\"?", "options": ["weiblich (f.)", "sächlich (n.)", "männlich (m.)"], "correctIndex": 1, "explanation": "sächlich (n.)"},
+  {"question": "Teil 3, Wörter einordnen: Welches Genus hat \"locus\"?", "options": ["männlich (m.)", "sächlich (n.)", "weiblich (f.)"], "correctIndex": 0, "explanation": "männlich (m.)"},
+  {"question": "Finde die richtige Lösung:\nTeil 4, 1 Fehler: Marcus amica salūtat.\n(Ein Fehler beim Objekt.)", "options": ["Marcus puellam videt.", "Puer amicam salutat.", "Puellae amicos exspectant.", "Marcus amicam salūtat."], "correctIndex": 3, "explanation": "Richtig: Marcus amicam salūtat."},
+  {"question": "Was gehört in die Lücke?\nSetze das Verb in den Plural: exspectat → ___\n(Singular -t, Plural -nt.)", "options": ["exspectant", "respondent", "salūtant", "properant"], "correctIndex": 0, "explanation": "Setze das Verb in den Plural: exspectat → exspectant"},
+  {"question": "Was gehört in die Lücke?\nSetze das Verb in den Plural: videt → ___\n(Singular -t, Plural -nt.)", "options": ["rogant", "vident", "tacent", "adsunt"], "correctIndex": 1, "explanation": "Setze das Verb in den Plural: videt → vident"},
+  {"question": "Was gehört in die Lücke?\nSetze das Verb in den Plural: salūtat → ___\n(Singular -t, Plural -nt.)", "options": ["properant", "adsunt", "salūtant", "gaudent"], "correctIndex": 2, "explanation": "Setze das Verb in den Plural: salūtat → salūtant"},
+  {"question": "Was gehört in die Lücke?\nSetze das Verb in den Plural: properat → ___\n(Singular -t, Plural -nt.)", "options": ["properant", "respondent", "salūtant", "exspectant"], "correctIndex": 0, "explanation": "Setze das Verb in den Plural: properat → properant"},
+  {"question": "Was gehört in die Lücke?\nSetze das Verb in den Plural: rogat → ___\n(Singular -t, Plural -nt.)", "options": ["tacent", "rīdent", "vident", "rogant"], "correctIndex": 3, "explanation": "Setze das Verb in den Plural: rogat → rogant"},
+  {"question": "Was gehört in die Lücke?\nSetze das Verb in den Plural: stat → ___\n(Singular -t, Plural -nt.)", "options": ["stant", "rogant", "vident", "adsunt"], "correctIndex": 0, "explanation": "Setze das Verb in den Plural: stat → stant"},
+  {"question": "Was gehört in die Lücke?\nSetze das Verb in den Plural: rīdet → ___\n(Singular -t, Plural -nt.)", "options": ["adsunt", "vident", "tacent", "rīdent"], "correctIndex": 3, "explanation": "Setze das Verb in den Plural: rīdet → rīdent"},
+  {"question": "Was gehört in die Lücke?\nSetze das Verb in den Plural: tacet → ___\n(Singular -t, Plural -nt.)", "options": ["rīdent", "adsunt", "vident", "tacent"], "correctIndex": 3, "explanation": "Setze das Verb in den Plural: tacet → tacent"},
+  {"question": "Was gehört in die Lücke?\nSetze das Verb in den Plural: respondet → ___\n(Singular -t, Plural -nt.)", "options": ["salūtant", "respondent", "exspectant", "properant"], "correctIndex": 1, "explanation": "Setze das Verb in den Plural: respondet → respondent"},
+  {"question": "Was gehört in die Lücke?\nSetze das Verb in den Plural: gaudet → ___\n(Singular -t, Plural -nt.)", "options": ["vident", "rogant", "adsunt", "gaudent"], "correctIndex": 3, "explanation": "Setze das Verb in den Plural: gaudet → gaudent"},
+  {"question": "Was gehört in die Lücke?\nSetze das Verb in den Plural: adest → ___\n(Singular -t, Plural -nt (adest: adsunt).)", "options": ["rīdent", "rogant", "adsunt", "tacent"], "correctIndex": 2, "explanation": "Setze das Verb in den Plural: adest → adsunt"},
+  {"question": "Was gehört in die Lücke?\nSetze das Verb in den Singular: intrant → ___", "options": ["intrat", "exspectat", "adiuvat", "putat"], "correctIndex": 0, "explanation": "Setze das Verb in den Singular: intrant → intrat"},
+  {"question": "Was gehört in die Lücke?\nSetze das Verb in den Singular: adiuvant → ___", "options": ["exspectat", "putat", "intrat", "adiuvat"], "correctIndex": 3, "explanation": "Setze das Verb in den Singular: adiuvant → adiuvat"},
+  {"question": "Was gehört in die Lücke?\nSetze das Verb in den Singular: putant → ___", "options": ["adiuvat", "intrat", "exspectat", "putat"], "correctIndex": 3, "explanation": "Setze das Verb in den Singular: putant → putat"},
+  {"question": "Was gehört in die Lücke?\nSetze das Verb in den Singular: exspectant → ___", "options": ["exspectat", "putat", "adiuvat", "intrat"], "correctIndex": 0, "explanation": "Setze das Verb in den Singular: exspectant → exspectat"},
+  {"question": "Was gehört in die Lücke?\nBilde den Nominativ Plural: amicus → ___", "options": ["pueri", "amici", "loci", "verba"], "correctIndex": 1, "explanation": "Bilde den Nominativ Plural: amicus → amici"},
+  {"question": "Finde die richtige Lösung:\nSetze den ganzen Satz in den Plural:\nPuella amicum exspectat.\n(Subjekt, Objekt und Prädikat ändern sich.)", "options": ["Puellae amicos exspectant.", "Gaius amicos salutat.", "Marcus puellam videt.", "Amici puellam exspectant."], "correctIndex": 0, "explanation": "Richtig: Puellae amicos exspectant."},
+  {"question": "Finde die richtige Lösung:\nSetze den ganzen Satz in den Plural:\nPuer templum videt.\n(Subjekt, Objekt und Prädikat ändern sich.)", "options": ["Amici puellas salūtant.", "Puer amicam salutat.", "Marcus puellam videt.", "Pueri templa vident."], "correctIndex": 3, "explanation": "Richtig: Pueri templa vident."},
+  {"question": "Finde die richtige Lösung:\nSetze den ganzen Satz in den Plural:\nAmicus puellam salūtat.\n(Subjekt, Objekt und Prädikat ändern sich.)", "options": ["Puer amicam salutat.", "Amici puellas salūtant.", "Sulpicia ad basilicam properat.", "Amici puellam exspectant."], "correctIndex": 1, "explanation": "Richtig: Amici puellas salūtant."},
+  {"question": "Welches Genus haben Wörter mit der Endung -a (puella) meistens?", "options": ["männlich (m.)", "weiblich (f.)", "sächlich (n.)"], "correctIndex": 1, "explanation": "Wörter auf -a sind meistens weiblich (f.)."},
+  {"question": "Welches Genus haben Wörter mit der Endung -us (amicus) meistens?", "options": ["männlich (m.)", "weiblich (f.)", "sächlich (n.)"], "correctIndex": 0, "explanation": "Wörter auf -us sind meistens männlich (m.)."},
+  {"question": "Welches Genus haben Wörter mit der Endung -um (templum) meistens?", "options": ["sächlich (n.)", "weiblich (f.)", "männlich (m.)"], "correctIndex": 0, "explanation": "Wörter auf -um sind sächlich (n.)."},
+  {"question": "Welches Genus haben Wörter mit der Endung -er (puer) meistens?", "options": ["weiblich (f.)", "männlich (m.)", "sächlich (n.)"], "correctIndex": 1, "explanation": "Wörter auf -er der o-Deklination sind männlich (m.)."},
+  {"question": "Übersetze: Puellae amicos exspectant.", "options": ["Die Freunde begrüßen das Mädchen, aber das Mädchen antwortet nicht.", "Dann begrüßen die Mädchen die Freunde.", "Die Mädchen warten auf die Freunde.", "Gaius sieht die Freunde."], "correctIndex": 2, "explanation": "Puellae amicos exspectant. = Die Mädchen warten auf die Freunde."},
+  {"question": "Übersetze: Pueri templa vident.", "options": ["Die Jungen sehen die Tempel.", "Die Jungen sehen Marcus nicht und begrüßen ihn nicht.", "Die Freunde sehen plötzlich den Tempel.", "Die Jungen sehen die Mädchen vielleicht nicht."], "correctIndex": 0, "explanation": "Pueri templa vident. = Die Jungen sehen die Tempel."},
+  {"question": "Übersetze: Amici puellam salūtant, sed puella non respondet.", "options": ["Das Mädchen freut sich, aber es antwortet nicht.", "Dann begrüßen die Mädchen die Freunde.", "Die Jungen sehen Marcus nicht und begrüßen ihn nicht.", "Die Freunde begrüßen das Mädchen, aber das Mädchen antwortet nicht."], "correctIndex": 3, "explanation": "Amici puellam salūtant, sed puella non respondet. = Die Freunde begrüßen das Mädchen, aber das Mädchen antwortet nicht."}
+];
+
+/* ======================= Konfiguration ======================= */
+const CFG = {
+  playerHp: 100, playerSpeed: 210, playerRadius: 12,
+  fireInterval: 0.9, bulletSpeed: 520, bulletDamage: 8, bulletLife: 1.1,
+  trostHeal: 5, wrongWeightAdd: 3, weightMax: 12, rightWeightDecay: 0.5,
+  xpBase: 4, xpPerLevel: 3, magnet: 90, maxEnemies: 160,
+  joyRadius: 55,      // Touch: Zugweite (px) für volles Tempo
+  joyDeadzone: 0.12   // Touch: Totzone (Anteil des Radius)
+};
+
+/* ======================= Upgrades ======================= */
+const UPGRADES = [
+  { id: 'rate',   name: '+20 % Feuerrate',   desc: 'Die Waffe schießt schneller.',      apply: p => p.fireRate *= 1.2 },
+  { id: 'multi',  name: '+1 Projektil',      desc: 'Ein zusätzliches Geschoss pro Schuss.', apply: p => p.projectiles += 1 },
+  { id: 'speed',  name: '+15 % Tempo',       desc: 'Du bewegst dich schneller.',        apply: p => p.speed *= 1.15 },
+  { id: 'aura',   name: 'Flächenschaden',    desc: 'Eine Schockwelle trifft alle Gegner in der Nähe (stärker mit jeder Stufe).', apply: p => p.auraLevel += 1 },
+  { id: 'heal',   name: 'Heilung (+35 HP)',  desc: 'Stellt sofort Lebenspunkte wieder her.', apply: p => { p.hp = Math.min(p.maxHp, p.hp + 35); } },
+  { id: 'damage', name: '+25 % Schaden',     desc: 'Jedes Geschoss richtet mehr Schaden an.', apply: p => p.damage *= 1.25 }
+];
+
+/* ======================= Hilfsfunktionen ======================= */
+const $ = id => document.getElementById(id);
+const rand = (a, b) => a + Math.random() * (b - a);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const fmtTime = s => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
+function shuffle(arr) { const a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+
+/* ======================= Audio (Web Audio, synthetisch) ======================= */
+const Sound = (() => {
+  let ctx = null;
+  function ensure() { if (!ctx) { try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} } if (ctx && ctx.state === 'suspended') ctx.resume(); }
+  function beep(freq, dur, type = 'square', vol = 0.06, slideTo = null, delay = 0) {
+    if (!ctx) return;
+    const t = ctx.currentTime + delay, o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t);
+    if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(ctx.destination); o.start(t); o.stop(t + dur + 0.02);
+  }
+  return {
+    ensure,
+    shoot:  () => beep(880, 0.07, 'square', 0.025, 440),
+    hit:    () => beep(180, 0.06, 'sawtooth', 0.04, 90),
+    hurt:   () => beep(140, 0.22, 'sawtooth', 0.08, 50),
+    levelUp:() => { [523, 659, 784, 1047].forEach((f, i) => beep(f, 0.12, 'square', 0.05, null, i * 0.08)); },
+    right:  () => { beep(660, 0.1, 'triangle', 0.08); beep(990, 0.18, 'triangle', 0.08, null, 0.09); },
+    wrong:  () => { beep(220, 0.25, 'sawtooth', 0.07, 110); beep(150, 0.3, 'sawtooth', 0.07, 70, 0.15); },
+    gem:    () => beep(1200, 0.04, 'sine', 0.03)
+  };
+})();
+
+/* ======================= Latein-Pool-Verwaltung (Spaced Repetition) ======================= */
+const Quiz = {
+  weights: [], last: -1, asked: 0, correct: 0, wrongSet: new Map(),
+  reset() { this.weights = LATIN_POOL.map(() => 1); this.last = -1; this.asked = 0; this.correct = 0; this.wrongSet = new Map(); },
+  next() {
+    let total = 0;
+    const w = this.weights.map((x, i) => (i === this.last && LATIN_POOL.length > 1) ? 0 : x);
+    w.forEach(x => total += x);
+    let r = Math.random() * total, idx = 0;
+    for (let i = 0; i < w.length; i++) { r -= w[i]; if (r <= 0) { idx = i; break; } }
+    this.last = idx;
+    const e = LATIN_POOL[idx];
+    const order = shuffle(e.options.map((_, i) => i));
+    return { idx, question: e.question, options: order.map(i => e.options[i]), correct: order.indexOf(e.correctIndex), explanation: e.explanation };
+  },
+  answered(idx, ok) {
+    this.asked++;
+    if (ok) { this.correct++; this.weights[idx] = Math.max(1, this.weights[idx] - this.rightWeightDecay()); }
+    else { this.weights[idx] = Math.min(CFG.weightMax, this.weights[idx] + CFG.wrongWeightAdd); this.wrongSet.set(idx, (this.wrongSet.get(idx) || 0) + 1); }
+  },
+  rightWeightDecay() { return CFG.rightWeightDecay; }
+};
+
+/* ======================= Spielzustand ======================= */
+const canvas = $('c'), ctx = canvas.getContext('2d');
+let W = 0, H = 0;
+function resize() { const d = window.devicePixelRatio || 1; W = innerWidth; H = innerHeight; canvas.width = W * d; canvas.height = H * d; ctx.setTransform(d, 0, 0, d, 0, 0); }
+addEventListener('resize', resize); resize();
+
+let state = 'menu';            // menu | play | quiz | over
+let G = null;                  // Spielwelt
+const keys = {};
+
+function newGame() {
+  Quiz.reset();
+  G = {
+    t: 0, kills: 0, level: 1, xp: 0, xpNeed: CFG.xpBase + CFG.xpPerLevel, pendingLevels: 0,
+    p: { x: W / 2, y: H / 2, r: CFG.playerRadius, hp: CFG.playerHp, maxHp: CFG.playerHp, speed: CFG.playerSpeed,
+         fireRate: 1 / CFG.fireInterval, projectiles: 1, damage: CFG.bulletDamage, auraLevel: 0,
+         fireCd: 0, auraCd: 2, invuln: 0, angle: 0 },
+    enemies: [], bullets: [], gems: [], parts: [], rings: [],
+    spawnCd: 1, waveCd: 6, shake: 0
+  };
+  updateHud();
+}
+
+/* ======================= Eingabe ======================= */
+addEventListener('keydown', e => {
+  Sound.ensure();
+  if (state === 'quiz') {
+    // Spielsteuerung ist im Quiz komplett gesperrt; nur 1–4 (bzw. 1–3 für Upgrade-Wahl)
+    if (/^[1-4]$/.test(e.key) && quizHandler) quizHandler(parseInt(e.key, 10) - 1);
+    e.preventDefault();
+    return;
+  }
+  keys[e.code] = true;
+  if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
+});
+addEventListener('keyup', e => { keys[e.code] = false; });
+addEventListener('blur', () => { for (const k in keys) keys[k] = false; joy.id = null; });
+
+/* ---- Touch: schwebender virtueller Joystick (Tippen + Ziehen irgendwo auf der Arena) ---- */
+const joy = { id: null, ox: 0, oy: 0, x: 0, y: 0, dx: 0, dy: 0 };   // dx/dy in -1..1
+function joyMove(e) {
+  let vx = e.clientX - joy.ox, vy = e.clientY - joy.oy;
+  const d = Math.hypot(vx, vy), R = CFG.joyRadius;
+  if (d > R) { vx *= R / d; vy *= R / d; }
+  joy.x = joy.ox + vx; joy.y = joy.oy + vy;
+  const m = Math.min(1, d / R);
+  if (m < CFG.joyDeadzone) { joy.dx = joy.dy = 0; } else { joy.dx = vx / R; joy.dy = vy / R; }
+}
+canvas.addEventListener('pointerdown', e => {
+  if (e.pointerType === 'mouse' || state !== 'play' || joy.id !== null) return;
+  Sound.ensure(); joy.id = e.pointerId; joy.ox = joy.x = e.clientX; joy.oy = joy.y = e.clientY; joy.dx = joy.dy = 0;
+  try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+  e.preventDefault();
+});
+canvas.addEventListener('pointermove', e => { if (e.pointerId === joy.id) { joyMove(e); e.preventDefault(); } });
+const joyEnd = e => { if (e.pointerId === joy.id) { joy.id = null; joy.dx = joy.dy = 0; } };
+canvas.addEventListener('pointerup', joyEnd); canvas.addEventListener('pointercancel', joyEnd);
+function joyReset() { joy.id = null; joy.dx = joy.dy = 0; }
+/* Hinweis zum Querformat nur auf Touch-Geräten im Hochformat */
+function orientHint() { $('rotate').classList.toggle('on', innerHeight > innerWidth); }
+addEventListener('resize', orientHint); orientHint();
+
+/* ======================= Spawning ======================= */
+function spawnEnemy() {
+  if (G.enemies.length >= CFG.maxEnemies) return;
+  const side = Math.floor(Math.random() * 4), m = 30;
+  let x, y;
+  if (side === 0) { x = rand(0, W); y = -m; } else if (side === 1) { x = W + m; y = rand(0, H); }
+  else if (side === 2) { x = rand(0, W); y = H + m; } else { x = -m; y = rand(0, H); }
+  const scale = 1 + G.t / 70;
+  const skeleton = Math.random() < Math.min(0.55, 0.2 + G.t / 240);
+  G.enemies.push(skeleton
+    ? { type: 'skel', x, y, r: 11, hp: 6 * scale, maxHp: 6 * scale, speed: rand(80, 105), dmg: 7, hit: 0, xp: 1 }
+    : { type: 'leg',  x, y, r: 14, hp: 14 * scale, maxHp: 14 * scale, speed: rand(48, 66), dmg: 10, hit: 0, xp: 2 });
+}
+
+/* ======================= Effekte ======================= */
+function burst(x, y, color, n = 8, speed = 160) {
+  for (let i = 0; i < n; i++) { const a = Math.random() * 6.283, s = rand(speed * .3, speed);
+    G.parts.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: rand(.2, .5), max: .5, color, size: rand(2, 4) }); }
+}
+function flash(color) { const f = $('flash'); f.style.background = color; f.style.transition = 'none'; f.style.opacity = '.28';
+  requestAnimationFrame(() => { f.style.transition = 'opacity .5s'; f.style.opacity = '0'; }); }
+
+/* ======================= Update ======================= */
+function update(dt) {
+  const p = G.p; G.t += dt;
+
+  // Bewegung
+  let dx = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
+  let dy = (keys.KeyS || keys.ArrowDown ? 1 : 0) - (keys.KeyW || keys.ArrowUp ? 1 : 0);
+  if (dx || dy) { const l = Math.hypot(dx, dy); p.x += dx / l * p.speed * dt; p.y += dy / l * p.speed * dt; }
+  else if (joy.id !== null && (joy.dx || joy.dy)) { p.x += joy.dx * p.speed * dt; p.y += joy.dy * p.speed * dt; }   // analog: Zugweite = Tempo
+  p.x = clamp(p.x, p.r, W - p.r); p.y = clamp(p.y, p.r + 40, H - p.r);
+  p.invuln = Math.max(0, p.invuln - dt);
+
+  // Nächster Gegner & Auto-Fire
+  let target = null, best = Infinity;
+  for (const e of G.enemies) { const d = (e.x - p.x) ** 2 + (e.y - p.y) ** 2; if (d < best) { best = d; target = e; } }
+  if (target) p.angle = Math.atan2(target.y - p.y, target.x - p.x);
+  p.fireCd -= dt;
+  if (target && p.fireCd <= 0) {
+    p.fireCd = 1 / p.fireRate;
+    const n = p.projectiles;
+    for (let i = 0; i < n; i++) {
+      const a = p.angle + (i - (n - 1) / 2) * 0.16;
+      G.bullets.push({ x: p.x, y: p.y, vx: Math.cos(a) * CFG.bulletSpeed, vy: Math.sin(a) * CFG.bulletSpeed, life: CFG.bulletLife, dmg: p.damage });
+    }
+    Sound.shoot();
+  }
+
+  // Flächenschaden (Schockwelle)
+  if (p.auraLevel > 0) {
+    p.auraCd -= dt;
+    if (p.auraCd <= 0) {
+      p.auraCd = 2.2;
+      const R = 60 + 28 * p.auraLevel, dmg = 6 + 4 * p.auraLevel;
+      G.rings.push({ x: p.x, y: p.y, r: 0, R, life: .35, max: .35 });
+      for (const e of G.enemies) if (Math.hypot(e.x - p.x, e.y - p.y) < R + e.r) damageEnemy(e, dmg);
+      Sound.hit();
+    }
+  }
+
+  // Spawns (stetig + Wellen)
+  G.spawnCd -= dt; G.waveCd -= dt;
+  if (G.spawnCd <= 0) { G.spawnCd = Math.max(0.25, 1.1 - G.t / 120); spawnEnemy(); }
+  if (G.waveCd <= 0) { G.waveCd = Math.max(4, 8 - G.t / 40); const n = 4 + Math.floor(G.t / 12); for (let i = 0; i < n; i++) spawnEnemy(); }
+
+  // Geschosse
+  for (const b of G.bullets) {
+    b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
+    if (b.x < -20 || b.x > W + 20 || b.y < -20 || b.y > H + 20) b.life = 0;
+    if (b.life <= 0) continue;
+    for (const e of G.enemies) {
+      if (e.hp > 0 && Math.hypot(e.x - b.x, e.y - b.y) < e.r + 4) { damageEnemy(e, b.dmg); b.life = 0; burst(b.x, b.y, '#ffe082', 5, 120); break; }
+    }
+  }
+  G.bullets = G.bullets.filter(b => b.life > 0);
+
+  // Gegner
+  for (const e of G.enemies) {
+    if (e.hp <= 0) continue;
+    const a = Math.atan2(p.y - e.y, p.x - e.x);
+    e.x += Math.cos(a) * e.speed * dt; e.y += Math.sin(a) * e.speed * dt; e.hit = Math.max(0, e.hit - dt);
+    if (p.invuln <= 0 && Math.hypot(p.x - e.x, p.y - e.y) < p.r + e.r) hurtPlayer(e.dmg);
+  }
+  // Gegner leicht voneinander abstoßen (billig, nur Nachbarn per Zufallsstichprobe)
+  for (let i = 0; i < G.enemies.length; i++) { const a = G.enemies[i], b = G.enemies[(i * 7 + 3) % G.enemies.length];
+    if (a === b) continue; const d = Math.hypot(a.x - b.x, a.y - b.y), min = a.r + b.r;
+    if (d > 0 && d < min) { const k = (min - d) / 2 / d; a.x += (a.x - b.x) * k; a.y += (a.y - b.y) * k; b.x -= (a.x - b.x) * k; b.y -= (a.y - b.y) * k; } }
+  G.enemies = G.enemies.filter(e => e.hp > 0);
+
+  // XP-Kristalle
+  for (const g of G.gems) {
+    const d = Math.hypot(p.x - g.x, p.y - g.y);
+    if (d < CFG.magnet) { g.x += (p.x - g.x) / d * 320 * dt; g.y += (p.y - g.y) / d * 320 * dt; }
+    if (d < p.r + 8) { g.taken = true; G.xp += g.v; Sound.gem(); }
+  }
+  G.gems = G.gems.filter(g => !g.taken);
+
+  // Partikel
+  for (const q of G.parts) { q.x += q.vx * dt; q.y += q.vy * dt; q.life -= dt; q.vx *= 0.94; q.vy *= 0.94; }
+  G.parts = G.parts.filter(q => q.life > 0);
+  for (const r of G.rings) { r.life -= dt; r.r = r.R * (1 - r.life / r.max); }
+  G.rings = G.rings.filter(r => r.life > 0);
+  G.shake = Math.max(0, G.shake - dt * 30);
+
+  // Level-Up
+  while (G.xp >= G.xpNeed) { G.xp -= G.xpNeed; G.level++; G.xpNeed = CFG.xpBase + CFG.xpPerLevel * G.level; G.pendingLevels++; }
+  if (G.pendingLevels > 0) { Sound.levelUp(); openLevelUp(); }
+
+  if (p.hp <= 0) endGame();
+  updateHud();
+}
+
+function damageEnemy(e, dmg) {
+  e.hp -= dmg; e.hit = 0.08; Sound.hit();
+  if (e.hp <= 0) {
+    G.kills++; burst(e.x, e.y, e.type === 'leg' ? '#ff7043' : '#eceff1', 12, 200);
+    G.gems.push({ x: e.x, y: e.y, v: e.xp });
+  }
+}
+function hurtPlayer(d) {
+  const p = G.p; p.hp -= d; p.invuln = 0.5; G.shake = 9; Sound.hurt(); burst(p.x, p.y, '#ff5252', 10, 180); flash('#ff0000');
+}
+
+/* ======================= Rendering ======================= */
+function draw() {
+  ctx.save();
+  ctx.fillStyle = '#0d0d16'; ctx.fillRect(0, 0, W, H);
+  if (!G) { ctx.restore(); return; }
+  if (G.shake > 0) ctx.translate(rand(-G.shake, G.shake), rand(-G.shake, G.shake));
+
+  // Arena-Gitter
+  ctx.strokeStyle = '#161626'; ctx.lineWidth = 1; ctx.beginPath();
+  for (let x = 0; x < W; x += 48) { ctx.moveTo(x, 0); ctx.lineTo(x, H); }
+  for (let y = 0; y < H; y += 48) { ctx.moveTo(0, y); ctx.lineTo(W, y); }
+  ctx.stroke();
+
+  for (const r of G.rings) { ctx.strokeStyle = `rgba(100,200,255,${r.life / r.max})`; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(r.x, r.y, r.r, 0, 6.283); ctx.stroke(); }
+
+  for (const g of G.gems) { ctx.fillStyle = '#4fc3f7'; ctx.save(); ctx.translate(g.x, g.y); ctx.rotate(Math.PI / 4); ctx.fillRect(-4, -4, 8, 8); ctx.restore(); }
+
+  for (const e of G.enemies) {
+    ctx.fillStyle = e.hit > 0 ? '#fff' : (e.type === 'leg' ? '#b71c1c' : '#cfd8dc');
+    if (e.type === 'leg') {
+      ctx.fillRect(e.x - e.r, e.y - e.r, e.r * 2, e.r * 2);
+      ctx.fillStyle = '#ffca28'; ctx.fillRect(e.x - e.r, e.y - e.r, e.r * 2, 4);      // Helmkamm
+    } else {
+      ctx.beginPath(); ctx.moveTo(e.x, e.y - e.r); ctx.lineTo(e.x + e.r, e.y + e.r); ctx.lineTo(e.x - e.r, e.y + e.r); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#111'; ctx.fillRect(e.x - 4, e.y - 1, 3, 3); ctx.fillRect(e.x + 1, e.y - 1, 3, 3); // Augen
+    }
+    if (e.hp < e.maxHp) { ctx.fillStyle = '#000a'; ctx.fillRect(e.x - e.r, e.y - e.r - 8, e.r * 2, 4); ctx.fillStyle = '#e53935'; ctx.fillRect(e.x - e.r, e.y - e.r - 8, e.r * 2 * Math.max(0, e.hp / e.maxHp), 4); }
+  }
+
+  ctx.fillStyle = '#ffe082'; for (const b of G.bullets) { ctx.beginPath(); ctx.arc(b.x, b.y, 4, 0, 6.283); ctx.fill(); }
+
+  const p = G.p;
+  if (p.auraLevel > 0) { ctx.strokeStyle = '#4fc3f733'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(p.x, p.y, 60 + 28 * p.auraLevel, 0, 6.283); ctx.stroke(); }
+  if (p.invuln <= 0 || Math.floor(p.invuln * 20) % 2) {
+    ctx.fillStyle = '#66bb6a'; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 6.283); ctx.fill();
+    ctx.strokeStyle = '#e8f5e9'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + Math.cos(p.angle) * (p.r + 8), p.y + Math.sin(p.angle) * (p.r + 8)); ctx.stroke();
+  }
+
+  for (const q of G.parts) { ctx.globalAlpha = clamp(q.life / q.max, 0, 1); ctx.fillStyle = q.color; ctx.fillRect(q.x, q.y, q.size, q.size); }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+  if (joy.id !== null && state === 'play') {   // Joystick (ohne Screen-Shake)
+    ctx.strokeStyle = '#ffffff55'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(joy.ox, joy.oy, CFG.joyRadius, 0, 6.283); ctx.stroke();
+    ctx.fillStyle = '#ffffff44'; ctx.beginPath(); ctx.arc(joy.x, joy.y, 20, 0, 6.283); ctx.fill();
+  }
+}
+
+function updateHud() {
+  if (!G) return;
+  const p = G.p;
+  $('hpFill').style.width = clamp(p.hp / p.maxHp * 100, 0, 100) + '%';
+  $('hpTxt').textContent = Math.ceil(Math.max(0, p.hp)) + ' / ' + p.maxHp;
+  $('xpFill').style.width = clamp(G.xp / G.xpNeed * 100, 0, 100) + '%';
+  $('xpTxt').textContent = 'XP ' + G.xp + ' / ' + G.xpNeed;
+  $('lvl').textContent = G.level; $('time').textContent = fmtTime(G.t); $('kills').textContent = G.kills;
+}
+
+/* ======================= Level-Up-Modal: Upgrade wählen -> Latein-Frage ======================= */
+let quizHandler = null;
+function openLevelUp() {
+  state = 'quiz';
+  for (const k in keys) keys[k] = false;       // keine "hängenden" Tasten
+  joyReset();                                   // Joystick loslassen
+  G.pendingLevels--;
+  const offers = shuffle(UPGRADES).slice(0, 3);
+  const card = $('modalCard'); card.innerHTML = '';
+  const h = document.createElement('h2'); h.textContent = 'Level ' + G.level + '!';
+  const s = document.createElement('p'); s.className = 'sub'; s.textContent = 'Wähle ein Upgrade – du bekommst es nur bei richtiger Latein-Antwort.';
+  const grid = document.createElement('div'); grid.className = 'grid';
+  card.append(h, s, grid);
+  const pick = i => { if (i < 0 || i >= offers.length) return; askQuestion(offers[i]); };
+  offers.forEach((u, i) => {
+    const b = document.createElement('button'); b.className = 'opt';
+    const k = document.createElement('kbd'); k.textContent = i + 1;
+    const d = document.createElement('div'); d.textContent = u.name;
+    const sm = document.createElement('small'); sm.textContent = u.desc; d.appendChild(sm);
+    b.append(k, d); b.onclick = () => pick(i); grid.appendChild(b);
+  });
+  quizHandler = pick;
+  $('modal').classList.add('show');
+}
+
+function askQuestion(upgrade) {
+  const q = Quiz.next(), card = $('modalCard'); card.innerHTML = '';
+  const h = document.createElement('h2'); h.textContent = 'Upgrade: ' + upgrade.name;
+  const qq = document.createElement('div'); qq.className = 'q'; qq.textContent = q.question;
+  const grid = document.createElement('div'); grid.className = 'grid';
+  const fb = document.createElement('div'); fb.className = 'fb';
+  card.append(h, qq, grid, fb);
+  const btns = q.options.map((o, i) => {
+    const b = document.createElement('button'); b.className = 'opt';
+    const k = document.createElement('kbd'); k.textContent = i + 1;
+    b.append(k, document.createTextNode(o)); grid.appendChild(b); return b;
+  });
+  let done = false;
+  const answer = i => {
+    if (done || i < 0 || i >= q.options.length) return; done = true; quizHandler = null;
+    btns.forEach(b => b.disabled = true);
+    const ok = i === q.correct;
+    Quiz.answered(q.idx, ok);
+    btns[q.correct].classList.add('right');
+    if (ok) {
+      upgrade.apply(G.p); Sound.right(); flash('#00e676');
+      fb.className = 'fb good'; fb.textContent = '✔ Richtig! ' + q.explanation;
+      setTimeout(closeQuiz, 700);
+    } else {
+      btns[i].classList.add('wrong'); Sound.wrong();
+      G.p.hp = Math.min(G.p.maxHp, G.p.hp + CFG.trostHeal);
+      fb.className = 'fb bad'; fb.textContent = '✘ Falsch – kein Upgrade (Trost: +' + CFG.trostHeal + ' HP). ' + q.explanation;
+      setTimeout(closeQuiz, 2000);
+    }
+    updateHud();
+  };
+  quizHandler = answer;
+  btns.forEach((b, i) => b.onclick = () => answer(i));
+}
+
+function closeQuiz() {
+  $('modal').classList.remove('show'); quizHandler = null;
+  if (G.pendingLevels > 0) { openLevelUp(); return; }   // mehrere Level-Ups hintereinander
+  state = 'play'; last = performance.now();
+}
+
+/* ======================= Game Over ======================= */
+function endGame() {
+  state = 'over'; $('modal').classList.remove('show'); quizHandler = null;
+  const rate = Quiz.asked ? Math.round(Quiz.correct / Quiz.asked * 100) : 0;
+  const card = $('overCard'); card.innerHTML = '';
+  const h = document.createElement('h2'); h.textContent = 'Game Over';
+  card.appendChild(h);
+  const row = (k, v) => { const d = document.createElement('div'); d.className = 'kv'; const a = document.createElement('span'); a.textContent = k; const b = document.createElement('b'); b.textContent = v; d.append(a, b); card.appendChild(d); };
+  row('Überlebenszeit', fmtTime(G.t)); row('Kills', G.kills); row('Erreichtes Level', G.level);
+  row('Latein-Quote', Quiz.asked ? `${Quiz.correct} / ${Quiz.asked} richtig (${rate} %)` : 'keine Fragen beantwortet');
+  const t = document.createElement('p'); t.className = 'sub'; t.style.marginTop = '14px';
+  t.textContent = Quiz.wrongSet.size ? 'Zum Nachlernen (falsch beantwortet):' : (Quiz.asked ? 'Alles richtig – stark!' : '');
+  card.appendChild(t);
+  if (Quiz.wrongSet.size) {
+    const ul = document.createElement('ul'); ul.className = 'wrongs';
+    for (const [idx, n] of Quiz.wrongSet) { const li = document.createElement('li'); li.textContent = LATIN_POOL[idx].explanation + (n > 1 ? ` (${n}×)` : ''); ul.appendChild(li); }
+    card.appendChild(ul);
+  }
+  const btn = document.createElement('button'); btn.className = 'big'; btn.textContent = 'Neustart (Enter)';
+  btn.onclick = restart; card.appendChild(btn);
+  $('over').classList.add('show');
+}
+function restart() { $('over').classList.remove('show'); newGame(); state = 'play'; last = performance.now(); }
+addEventListener('keydown', e => { if (state === 'over' && e.key === 'Enter') restart(); });
+$('startBtn').onclick = () => { Sound.ensure(); $('start').classList.remove('show'); newGame(); state = 'play'; last = performance.now(); };
+
+/* ======================= Hauptschleife (requestAnimationFrame + Delta-Time) ======================= */
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (state === 'play') update(dt);
+  draw();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+/* PWA: Service Worker für Offline-Start (nur über https/localhost) */
+if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+</script>
+</body>
+</html>
