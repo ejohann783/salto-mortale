@@ -48,6 +48,28 @@
   .onlytouch { display:none; } @media (pointer:coarse) { .onlytouch { display:inline; } .onlypc { display:none; } }
   .big { font-size:15px; padding:12px 22px; border-radius:10px; border:0; background:var(--gold); color:#000; font-weight:700; cursor:pointer; margin-top:16px; }
   ul.wrongs { margin:6px 0 0; padding-left:18px; font-size:14px; color:#d8d8ea; max-height:180px; overflow:auto; }
+  .streak { color:#ff9e40; font-weight:700; font-size:14px; margin:2px 0 6px; }
+  .combo { margin-top:12px; padding:10px 12px; border-radius:10px; background:#3a2e05; border:1px solid var(--gold); color:var(--gold); font-weight:800; font-size:16px; animation:pop .4s ease-out; }
+  @keyframes pop { 0% { transform:scale(.6); opacity:0; } 70% { transform:scale(1.08); } 100% { transform:scale(1); opacity:1; } }
+  button.joker { margin-top:10px; padding:8px 12px; border-radius:8px; border:1px dashed #b39ddb; background:#221b38; color:#d1c4e9; font-size:14px; cursor:pointer; }
+  button.joker:disabled { opacity:.5; cursor:default; }
+  button.opt.struck { opacity:.3; text-decoration:line-through; }
+  .record { text-align:center; font-size:22px; font-weight:900; color:var(--gold); margin:4px 0 10px; animation:pop .5s ease-out, glow 1.2s ease-in-out infinite alternate; }
+  @keyframes glow { from { text-shadow:0 0 4px #ffd54a55; } to { text-shadow:0 0 18px #ffd54a; } }
+  .coins { color:var(--gold); font-weight:700; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; justify-content:center; }
+  .big.alt { background:#2c2c48; color:var(--text); }
+  .shopitem { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--line); }
+  .shopitem small { color:#9a9ab8; display:block; font-size:12px; }
+  .shopitem button { min-width:96px; padding:8px 10px; border-radius:8px; border:0; background:var(--gold); color:#000; font-weight:700; cursor:pointer; }
+  .shopitem button:disabled { background:#2c2c48; color:#777; cursor:default; }
+  .pips { color:var(--gold); letter-spacing:2px; font-size:12px; }
+  .records { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:12px 0 4px; }
+  .records div { background:#0004; border:1px solid var(--line); border-radius:10px; padding:8px; text-align:center; font-size:12px; color:#9a9ab8; }
+  .records b { display:block; color:var(--gold); font-size:18px; }
+  label.f { display:block; font-size:13px; color:#9a9ab8; margin:10px 0 4px; }
+  input.f { width:100%; padding:10px; border-radius:8px; border:1px solid var(--line); background:#0b0b12; color:var(--text); font-size:15px; -webkit-user-select:text; user-select:text; }
+  #syncBadge { font-size:12px; color:#9a9ab8; margin-top:10px; text-align:center; }
   .kv { display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px solid var(--line); }
 </style>
 </head>
@@ -61,6 +83,8 @@
   <div class="stat">Level <b id="lvl">1</b></div>
   <div class="stat">Zeit <b id="time">0:00</b></div>
   <div class="stat">Kills <b id="kills">0</b></div>
+  <div class="stat">🔥 <b id="streak">0</b></div>
+  <div class="stat">Denare <b id="den">0</b></div>
 </div>
 
 <div class="overlay show" id="start">
@@ -71,10 +95,19 @@
     <span class="onlytouch"><b>Bewegen:</b> Finger irgendwo auf den Bildschirm legen und ziehen (Joystick). Loslassen = stehen bleiben.</span><br>
     Bei jedem Level-Up wählst du ein Upgrade – du bekommst es aber nur, wenn du die Latein-Frage richtig beantwortest
     (<span class="onlypc">Mausklick oder Tasten 1–4</span><span class="onlytouch">antippen</span>).<br>
-    <span class="onlytouch">Tipp: Handy quer halten.</span></p>
-    <button class="big" id="startBtn">Spiel starten</button>
+    <span class="onlytouch">Tipp: Handy quer halten.</span><br>
+    <b>Neu:</b> 3 richtige Antworten in Folge = ⚡ Combo-Bonus. Richtige Antworten bringen Denare – damit kaufst du im Shop dauerhafte Verbesserungen.</p>
+    <div id="startInfo"></div>
+    <div class="row">
+      <button class="big" id="startBtn">Spiel starten</button>
+      <button class="big alt" id="shopBtn">🏛 Shop</button>
+      <button class="big alt" id="setBtn">⚙</button>
+    </div>
+    <div id="syncBadge"></div>
   </div>
 </div>
+<div class="overlay" id="shop"><div class="card" id="shopCard"></div></div>
+<div class="overlay" id="settings"><div class="card" id="setCard"></div></div>
 <div class="overlay" id="modal"><div class="card" id="modalCard"></div></div>
 <div class="overlay" id="over"><div class="card" id="overCard"></div></div>
 
@@ -332,7 +365,11 @@ const Sound = (() => {
     levelUp:() => { [523, 659, 784, 1047].forEach((f, i) => beep(f, 0.12, 'square', 0.05, null, i * 0.08)); },
     right:  () => { beep(660, 0.1, 'triangle', 0.08); beep(990, 0.18, 'triangle', 0.08, null, 0.09); },
     wrong:  () => { beep(220, 0.25, 'sawtooth', 0.07, 110); beep(150, 0.3, 'sawtooth', 0.07, 70, 0.15); },
-    gem:    () => beep(1200, 0.04, 'sine', 0.03)
+    gem:    () => beep(1200, 0.04, 'sine', 0.03),
+    combo:  () => { [523, 784, 1047, 1568].forEach((f, i) => beep(f, 0.16, 'triangle', 0.07, null, i * 0.07)); },
+    blitz:  () => { beep(90, 0.5, 'sawtooth', 0.12, 40); beep(1800, 0.25, 'square', 0.04, 200); },
+    record: () => { [784, 988, 1175, 1568, 1976].forEach((f, i) => beep(f, 0.18, 'triangle', 0.07, null, i * 0.11)); },
+    coin:   () => { beep(1319, 0.06, 'square', 0.04); beep(1976, 0.12, 'square', 0.04, null, 0.06); }
   };
 })();
 
@@ -359,6 +396,74 @@ const Quiz = {
   rightWeightDecay() { return CFG.rightWeightDecay; }
 };
 
+/* ======================= Spielstand (lokal + optionaler GitHub-Sync) =======================
+ * Lokal: localStorage (sofort, offline).
+ * Online: optional in ein PRIVATES GitHub-Repo. Token + Repo werden nur auf dem Gerät
+ * eingegeben (Einstellungen), nie im Code – das Spiel-Repo ist öffentlich.
+ * Konflikt-Regel: der neuere Stand (updatedAt) gewinnt.
+ * =========================================================================================== */
+const SAVE_KEY = 'salto-save-v1', SYNC_KEY = 'salto-sync-v1';
+const SHOP = [
+  { id: 'hp',     name: 'Lebenskraft',      desc: '+10 max. HP pro Stufe',               max: 5, cost: l => 20 + 20 * l },
+  { id: 'dmg',    name: 'Geschärftes Gladius', desc: '+8 % Schaden pro Stufe',           max: 5, cost: l => 25 + 25 * l },
+  { id: 'speed',  name: 'Leichte Sandalen', desc: '+5 % Tempo pro Stufe',                max: 5, cost: l => 20 + 20 * l },
+  { id: 'magnet', name: 'Magnet-Amulett',   desc: '+25 Reichweite beim Einsammeln',       max: 4, cost: l => 15 + 15 * l },
+  { id: 'joker',  name: 'Minerva-Joker',    desc: 'Pro Runde 1× zwei falsche Antworten streichen (Taste J)', max: 3, cost: l => 40 + 40 * l },
+  { id: 'multi',  name: 'Doppelschuss',     desc: 'Startet jede Runde mit 2 Geschossen', max: 1, cost: () => 150 }
+];
+const Save = {
+  data: null, syncStatus: '',
+  blank() { return { v: 1, name: '', denare: 0, best: { time: 0, kills: 0, level: 0 }, shop: {}, stats: { runs: 0, asked: 0, correct: 0 }, updatedAt: 0 }; },
+  normalize(d) {
+    const b = this.blank(); if (!d || typeof d !== 'object') return b;
+    return { ...b, ...d, best: { ...b.best, ...(d.best || {}) }, shop: { ...(d.shop || {}) }, stats: { ...b.stats, ...(d.stats || {}) } };
+  },
+  loadLocal() { try { this.data = this.normalize(JSON.parse(localStorage.getItem(SAVE_KEY))); } catch (e) { this.data = this.blank(); } },
+  persist(push = true) {
+    this.data.updatedAt = Date.now();
+    try { localStorage.setItem(SAVE_KEY, JSON.stringify(this.data)); } catch (e) {}
+    if (push) this.push();
+  },
+  lvl(id) { return this.data.shop[id] || 0; },
+  // ---------- GitHub-Sync ----------
+  cfg() { try { return JSON.parse(localStorage.getItem(SYNC_KEY)) || null; } catch (e) { return null; } },
+  setCfg(c) { try { c ? localStorage.setItem(SYNC_KEY, JSON.stringify(c)) : localStorage.removeItem(SYNC_KEY); } catch (e) {} },
+  sha: null,
+  url(c) { return `https://api.github.com/repos/${c.repo}/contents/${c.path.split('/').map(encodeURIComponent).join('/')}`; },
+  headers(c) { return { 'Authorization': 'Bearer ' + c.token, 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }; },
+  async pull() {
+    const c = this.cfg(); if (!c) return 'aus';
+    const r = await fetch(this.url(c) + '?t=' + Date.now(), { headers: this.headers(c), cache: 'no-store' });
+    if (r.status === 404) { this.sha = null; return 'neu'; }
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json(); this.sha = j.sha;
+    const remote = this.normalize(JSON.parse(decodeURIComponent(escape(atob(j.content.replace(/\n/g, ''))))));
+    if (remote.updatedAt > this.data.updatedAt) { this.data = remote; try { localStorage.setItem(SAVE_KEY, JSON.stringify(remote)); } catch (e) {} return 'geladen'; }
+    return 'aktuell';
+  },
+  pushing: null, again: false,
+  push() {
+    if (!this.cfg()) return;
+    if (this.pushing) { this.again = true; return; }
+    this.pushing = (async () => {
+      const c = this.cfg();
+      try {
+        if (this.sha === null) { try { await this.pull(); } catch (e) {} }
+        const body = { message: 'Spielstand ' + new Date().toISOString(), content: btoa(unescape(encodeURIComponent(JSON.stringify(this.data, null, 2)))) };
+        if (this.sha) body.sha = this.sha;
+        let r = await fetch(this.url(c), { method: 'PUT', headers: this.headers(c), body: JSON.stringify(body) });
+        if (r.status === 409 || r.status === 422) { await this.pull(); if (this.sha) body.sha = this.sha; r = await fetch(this.url(c), { method: 'PUT', headers: this.headers(c), body: JSON.stringify(body) }); }
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        this.sha = (await r.json()).content.sha;
+        this.syncStatus = '☁ online gesichert ' + new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+      } catch (e) { this.syncStatus = '⚠ Online-Sicherung fehlgeschlagen (' + e.message + ') – lokal gespeichert'; }
+      this.pushing = null; renderSyncBadge();
+      if (this.again) { this.again = false; this.push(); }
+    })();
+  }
+};
+Save.loadLocal();
+
 /* ======================= Spielzustand ======================= */
 const canvas = $('c'), ctx = canvas.getContext('2d');
 let W = 0, H = 0;
@@ -371,12 +476,14 @@ const keys = {};
 
 function newGame() {
   Quiz.reset();
+  const L = id => Save.lvl(id), hp = CFG.playerHp + 10 * L('hp');
   G = {
     t: 0, kills: 0, level: 1, xp: 0, xpNeed: CFG.xpBase + CFG.xpPerLevel, pendingLevels: 0,
-    p: { x: W / 2, y: H / 2, r: CFG.playerRadius, hp: CFG.playerHp, maxHp: CFG.playerHp, speed: CFG.playerSpeed,
-         fireRate: 1 / CFG.fireInterval, projectiles: 1, damage: CFG.bulletDamage, auraLevel: 0,
-         fireCd: 0, auraCd: 2, invuln: 0, angle: 0 },
-    enemies: [], bullets: [], gems: [], parts: [], rings: [],
+    streak: 0, bestStreak: 0, denare: 0, jokers: L('joker'), banner: null,
+    p: { x: W / 2, y: H / 2, r: CFG.playerRadius, hp, maxHp: hp, speed: CFG.playerSpeed * (1 + 0.05 * L('speed')),
+         fireRate: 1 / CFG.fireInterval, projectiles: 1 + L('multi'), damage: CFG.bulletDamage * (1 + 0.08 * L('dmg')), auraLevel: 0,
+         magnet: CFG.magnet + 25 * L('magnet'), fireCd: 0, auraCd: 2, invuln: 0, angle: 0 },
+    enemies: [], bullets: [], gems: [], parts: [], rings: [], bolts: [], pendingBlitz: false,
     spawnCd: 1, waveCd: 6, shake: 0
   };
   updateHud();
@@ -388,6 +495,7 @@ addEventListener('keydown', e => {
   if (state === 'quiz') {
     // Spielsteuerung ist im Quiz komplett gesperrt; nur 1–4 (bzw. 1–3 für Upgrade-Wahl)
     if (/^[1-4]$/.test(e.key) && quizHandler) quizHandler(parseInt(e.key, 10) - 1);
+    if (e.key.toLowerCase() === 'j' && jokerHandler) jokerHandler();
     e.preventDefault();
     return;
   }
@@ -514,7 +622,7 @@ function update(dt) {
   // XP-Kristalle
   for (const g of G.gems) {
     const d = Math.hypot(p.x - g.x, p.y - g.y);
-    if (d < CFG.magnet) { g.x += (p.x - g.x) / d * 320 * dt; g.y += (p.y - g.y) / d * 320 * dt; }
+    if (d < p.magnet) { g.x += (p.x - g.x) / d * 320 * dt; g.y += (p.y - g.y) / d * 320 * dt; }
     if (d < p.r + 8) { g.taken = true; G.xp += g.v; Sound.gem(); }
   }
   G.gems = G.gems.filter(g => !g.taken);
@@ -524,6 +632,7 @@ function update(dt) {
   G.parts = G.parts.filter(q => q.life > 0);
   for (const r of G.rings) { r.life -= dt; r.r = r.R * (1 - r.life / r.max); }
   G.rings = G.rings.filter(r => r.life > 0);
+  for (const b of G.bolts) b.life -= dt; G.bolts = G.bolts.filter(b => b.life > 0);
   G.shake = Math.max(0, G.shake - dt * 30);
 
   // Level-Up
@@ -583,6 +692,10 @@ function draw() {
     ctx.strokeStyle = '#e8f5e9'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + Math.cos(p.angle) * (p.r + 8), p.y + Math.sin(p.angle) * (p.r + 8)); ctx.stroke();
   }
 
+  for (const b of G.bolts) {   // Blitze von oben
+    ctx.strokeStyle = `rgba(255,235,120,${b.life / .3})`; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(b.x + rand(-20, 20), 0);
+    for (let y = 0; y < b.y; y += 40) ctx.lineTo(b.x + rand(-14, 14), y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  }
   for (const q of G.parts) { ctx.globalAlpha = clamp(q.life / q.max, 0, 1); ctx.fillStyle = q.color; ctx.fillRect(q.x, q.y, q.size, q.size); }
   ctx.globalAlpha = 1;
   ctx.restore();
@@ -600,6 +713,7 @@ function updateHud() {
   $('xpFill').style.width = clamp(G.xp / G.xpNeed * 100, 0, 100) + '%';
   $('xpTxt').textContent = 'XP ' + G.xp + ' / ' + G.xpNeed;
   $('lvl').textContent = G.level; $('time').textContent = fmtTime(G.t); $('kills').textContent = G.kills;
+  $('streak').textContent = G.streak; $('den').textContent = Save.data.denare + G.denare;
 }
 
 /* ======================= Level-Up-Modal: Upgrade wählen -> Latein-Frage ======================= */
@@ -639,45 +753,100 @@ function askQuestion(upgrade) {
     const k = document.createElement('kbd'); k.textContent = i + 1;
     b.append(k, document.createTextNode(o)); grid.appendChild(b); return b;
   });
+  // Combo-Anzeige
+  if (G.streak > 0) { const st = document.createElement('div'); st.className = 'streak'; st.textContent = `🔥 Serie: ${G.streak} – ` + (3 - G.streak % 3) + ' bis zum Combo-Bonus'; card.insertBefore(st, qq); }
   let done = false;
+  // Minerva-Joker: streicht falsche Antworten (bei 4 Optionen zwei, bei 3 eine)
+  jokerHandler = null;
+  if (G.jokers > 0 && q.options.length >= 3) {
+    const jb = document.createElement('button'); jb.className = 'joker';
+    jb.textContent = `🦉 Minerva-Joker (${G.jokers}×)` + (matchMedia('(pointer:coarse)').matches ? '' : ' – Taste J');
+    card.insertBefore(jb, fb);
+    jokerHandler = () => {
+      if (done) return; jokerHandler = null; G.jokers--; jb.disabled = true; jb.textContent = '🦉 Joker eingesetzt';
+      const wrongs = shuffle(q.options.map((_, i) => i).filter(i => i !== q.correct)).slice(0, q.options.length - 2);
+      wrongs.forEach(i => { btns[i].disabled = true; btns[i].classList.add('struck'); });
+    };
+    jb.onclick = jokerHandler;
+  }
   const answer = i => {
-    if (done || i < 0 || i >= q.options.length) return; done = true; quizHandler = null;
+    if (done || i < 0 || i >= q.options.length || btns[i].disabled) return; done = true; quizHandler = null; jokerHandler = null;
     btns.forEach(b => b.disabled = true);
     const ok = i === q.correct;
     Quiz.answered(q.idx, ok);
     btns[q.correct].classList.add('right');
     if (ok) {
+      G.streak++; G.bestStreak = Math.max(G.bestStreak, G.streak);
+      const coins = Math.min(15, 5 + 2 * (G.streak - 1)); G.denare += coins;
       upgrade.apply(G.p); Sound.right(); flash('#00e676');
-      fb.className = 'fb good'; fb.textContent = '✔ Richtig! ' + q.explanation;
-      setTimeout(closeQuiz, 700);
+      fb.className = 'fb good'; fb.textContent = `✔ Richtig! +${coins} Denare. ` + q.explanation;
+      if (G.streak % 3 === 0) {
+        const bonus = shuffle(UPGRADES.filter(u => u.id !== upgrade.id))[0];
+        bonus.apply(G.p); G.pendingBlitz = true;
+        const cb = document.createElement('div'); cb.className = 'combo';
+        cb.textContent = `⚡ COMBO ×${G.streak}! Bonus-Upgrade: ${bonus.name} + Jupiters Blitz!`;
+        card.insertBefore(cb, fb); Sound.combo();
+        setTimeout(closeQuiz, 1600);
+      } else setTimeout(closeQuiz, 900);
     } else {
+      G.streak = 0;
       btns[i].classList.add('wrong'); Sound.wrong();
       G.p.hp = Math.min(G.p.maxHp, G.p.hp + CFG.trostHeal);
       fb.className = 'fb bad'; fb.textContent = '✘ Falsch – kein Upgrade (Trost: +' + CFG.trostHeal + ' HP). ' + q.explanation;
-      setTimeout(closeQuiz, 2000);
+      setTimeout(closeQuiz, 2200);
     }
     updateHud();
   };
   quizHandler = answer;
   btns.forEach((b, i) => b.onclick = () => answer(i));
 }
+let jokerHandler = null;
+
+/* Combo-Belohnung: Blitz trifft alle Gegner auf dem Bildschirm */
+function jupiterBlitz() {
+  const p = G.p;
+  for (const e of G.enemies) {
+    damageEnemy(e, e.maxHp * 0.7 + 10);
+    G.bolts.push({ x: e.x, y: e.y, life: .3 });
+  }
+  G.rings.push({ x: p.x, y: p.y, r: 0, R: Math.max(W, H), life: .5, max: .5 });
+  G.shake = 12; flash('#ffd54a'); Sound.blitz();
+}
 
 function closeQuiz() {
   $('modal').classList.remove('show'); quizHandler = null;
   if (G.pendingLevels > 0) { openLevelUp(); return; }   // mehrere Level-Ups hintereinander
   state = 'play'; last = performance.now();
+  if (G.pendingBlitz) { G.pendingBlitz = false; jupiterBlitz(); }
 }
 
 /* ======================= Game Over ======================= */
 function endGame() {
-  state = 'over'; $('modal').classList.remove('show'); quizHandler = null;
+  state = 'over'; $('modal').classList.remove('show'); quizHandler = null; jokerHandler = null;
   const rate = Quiz.asked ? Math.round(Quiz.correct / Quiz.asked * 100) : 0;
+  // Denare abrechnen & Rekorde prüfen
+  const fromKills = Math.floor(G.kills / 10), fromTime = 2 * Math.floor(G.t / 60);
+  const earned = G.denare + fromKills + fromTime;
+  const S = Save.data, rec = [];
+  if (G.t > S.best.time) { S.best.time = G.t; rec.push('Zeit'); }
+  if (G.kills > S.best.kills) { S.best.kills = G.kills; rec.push('Kills'); }
+  if (G.level > S.best.level) { S.best.level = G.level; rec.push('Level'); }
+  const firstRun = S.stats.runs === 0;
+  S.denare += earned; S.stats.runs++; S.stats.asked += Quiz.asked; S.stats.correct += Quiz.correct;
+  Save.persist();
+
   const card = $('overCard'); card.innerHTML = '';
   const h = document.createElement('h2'); h.textContent = 'Game Over';
   card.appendChild(h);
-  const row = (k, v) => { const d = document.createElement('div'); d.className = 'kv'; const a = document.createElement('span'); a.textContent = k; const b = document.createElement('b'); b.textContent = v; d.append(a, b); card.appendChild(d); };
-  row('Überlebenszeit', fmtTime(G.t)); row('Kills', G.kills); row('Erreichtes Level', G.level);
+  if (rec.length && !firstRun) {
+    const r = document.createElement('div'); r.className = 'record'; r.textContent = '🏆 NEUER REKORD: ' + rec.join(', ') + '!';
+    card.appendChild(r); setTimeout(Sound.record, 250); setTimeout(() => flash('#ffd54a'), 250);
+  }
+  const row = (k, v, best) => { const d = document.createElement('div'); d.className = 'kv'; const a = document.createElement('span'); a.textContent = k; const b = document.createElement('b'); b.textContent = v + (best !== undefined ? '  (Rekord: ' + best + ')' : ''); d.append(a, b); card.appendChild(d); };
+  row('Überlebenszeit', fmtTime(G.t), fmtTime(S.best.time)); row('Kills', G.kills, S.best.kills); row('Erreichtes Level', G.level, S.best.level);
   row('Latein-Quote', Quiz.asked ? `${Quiz.correct} / ${Quiz.asked} richtig (${rate} %)` : 'keine Fragen beantwortet');
+  if (G.bestStreak >= 2) row('Längste Serie', '🔥 ' + G.bestStreak);
+  row('Denare verdient', `+${earned}  (Latein ${G.denare} · Kills ${fromKills} · Zeit ${fromTime})  → ${S.denare}`);
   const t = document.createElement('p'); t.className = 'sub'; t.style.marginTop = '14px';
   t.textContent = Quiz.wrongSet.size ? 'Zum Nachlernen (falsch beantwortet):' : (Quiz.asked ? 'Alles richtig – stark!' : '');
   card.appendChild(t);
@@ -686,13 +855,93 @@ function endGame() {
     for (const [idx, n] of Quiz.wrongSet) { const li = document.createElement('li'); li.textContent = LATIN_POOL[idx].explanation + (n > 1 ? ` (${n}×)` : ''); ul.appendChild(li); }
     card.appendChild(ul);
   }
-  const btn = document.createElement('button'); btn.className = 'big'; btn.textContent = 'Neustart (Enter)';
-  btn.onclick = restart; card.appendChild(btn);
+  const rowB = document.createElement('div'); rowB.className = 'row';
+  const btn = document.createElement('button'); btn.className = 'big'; btn.textContent = 'Neustart (Enter)'; btn.onclick = restart;
+  const sb = document.createElement('button'); sb.className = 'big alt'; sb.textContent = '🏛 Shop (' + S.denare + ' Denare)'; sb.onclick = () => openShop('over');
+  rowB.append(btn, sb); card.appendChild(rowB);
   $('over').classList.add('show');
 }
 function restart() { $('over').classList.remove('show'); newGame(); state = 'play'; last = performance.now(); }
-addEventListener('keydown', e => { if (state === 'over' && e.key === 'Enter') restart(); });
+addEventListener('keydown', e => { if (state === 'over' && e.key === 'Enter' && !$('shop').classList.contains('show')) restart(); });
+
+/* ======================= Shop (dauerhafte Verbesserungen) ======================= */
+let shopFrom = 'start';
+function openShop(from) {
+  shopFrom = from; $(from === 'over' ? 'over' : 'start').classList.remove('show');
+  const card = $('shopCard'); card.innerHTML = '';
+  const h = document.createElement('h2'); h.textContent = '🏛 Händler am Forum';
+  const sub = document.createElement('p'); sub.className = 'sub';
+  sub.innerHTML = 'Du hast <span class="coins">' + Save.data.denare + ' Denare</span>. Gekaufte Verbesserungen gelten in jeder Runde.';
+  card.append(h, sub);
+  for (const it of SHOP) {
+    const lv = Save.lvl(it.id), maxed = lv >= it.max, cost = it.cost(lv);
+    const d = document.createElement('div'); d.className = 'shopitem';
+    const l = document.createElement('div');
+    l.innerHTML = `<b></b> <span class="pips">${'●'.repeat(lv)}${'○'.repeat(it.max - lv)}</span><small></small>`;
+    l.querySelector('b').textContent = it.name; l.querySelector('small').textContent = it.desc;
+    const b = document.createElement('button');
+    b.textContent = maxed ? 'MAX' : cost + ' D'; b.disabled = maxed || Save.data.denare < cost;
+    b.onclick = () => { Save.data.denare -= cost; Save.data.shop[it.id] = lv + 1; Save.persist(); Sound.ensure(); Sound.coin(); openShop(shopFrom); };
+    d.append(l, b); card.appendChild(d);
+  }
+  const back = document.createElement('button'); back.className = 'big'; back.textContent = shopFrom === 'over' ? 'Neue Runde' : 'Zurück';
+  back.onclick = () => { $('shop').classList.remove('show'); if (shopFrom === 'over') restart(); else showStart(); };
+  card.appendChild(back);
+  $('shop').classList.add('show');
+}
+
+/* ======================= Einstellungen: Name + Online-Sicherung ======================= */
+function openSettings() {
+  $('start').classList.remove('show');
+  const c = Save.cfg() || { repo: '', token: '', path: 'saves/spielstand.json' };
+  const card = $('setCard');
+  card.innerHTML = `<h2>⚙ Einstellungen</h2>
+    <label class="f">Spielername</label><input class="f" id="fName" maxlength="20">
+    <h2 style="margin-top:18px;font-size:18px">☁ Online-Sicherung (GitHub)</h2>
+    <p class="sub">Optional. Speichert den Spielstand in ein <b>privates</b> GitHub-Repo, damit er nicht verloren geht und auf jedem Gerät gleich ist. Token und Repo bleiben nur auf diesem Gerät.</p>
+    <label class="f">Repo (besitzer/name)</label><input class="f" id="fRepo" placeholder="ejohann783/salto-mortale-saves" autocapitalize="off" autocomplete="off" spellcheck="false">
+    <label class="f">Datei im Repo</label><input class="f" id="fPath" autocapitalize="off" spellcheck="false">
+    <label class="f">Fine-grained Token (nur dieses Repo, „Contents: Read and write“)</label><input class="f" id="fTok" type="password" autocomplete="off" spellcheck="false">
+    <div class="fb" id="fMsg"></div>
+    <div class="row"><button class="big" id="fSave">Speichern & testen</button><button class="big alt" id="fOff">Sync aus</button><button class="big alt" id="fBack">Zurück</button></div>`;
+  $('fName').value = Save.data.name || ''; $('fRepo').value = c.repo; $('fPath').value = c.path; $('fTok').value = c.token;
+  const msg = (t, ok) => { $('fMsg').className = 'fb ' + (ok ? 'good' : 'bad'); $('fMsg').textContent = t; };
+  $('fSave').onclick = async () => {
+    Save.data.name = $('fName').value.trim(); Save.persist(false);
+    const repo = $('fRepo').value.trim(), token = $('fTok').value.trim(), path = $('fPath').value.trim() || 'saves/spielstand.json';
+    if (!repo && !token) { msg('Name gespeichert. Online-Sicherung ist aus.', true); return; }
+    if (!/^[\w.-]+\/[\w.-]+$/.test(repo) || !token) { msg('Bitte Repo im Format besitzer/name und Token angeben.', false); return; }
+    Save.setCfg({ repo, token, path }); Save.sha = null; msg('Teste Verbindung …', true);
+    try { const r = await Save.pull(); Save.push(); msg(r === 'geladen' ? '✔ Verbunden – neuerer Online-Stand wurde geladen.' : '✔ Verbunden – Spielstand wird online gesichert.', true); }
+    catch (e) { msg('✘ Verbindung fehlgeschlagen (' + e.message + '). 401 = Token falsch, 404 = Repo falsch oder Token hat keinen Zugriff.', false); }
+  };
+  $('fOff').onclick = () => { Save.setCfg(null); Save.syncStatus = ''; $('fTok').value = ''; msg('Online-Sicherung ausgeschaltet. Lokaler Spielstand bleibt erhalten.', true); };
+  $('fBack').onclick = () => { $('settings').classList.remove('show'); showStart(); };
+  $('settings').classList.add('show');
+}
+
+/* ======================= Startbildschirm ======================= */
+function renderSyncBadge() { const b = $('syncBadge'); if (b) b.textContent = Save.cfg() ? (Save.syncStatus || '☁ Online-Sicherung aktiv') : ''; }
+function showStart() {
+  const S = Save.data, info = $('startInfo');
+  info.innerHTML = '';
+  if (S.stats.runs > 0) {
+    const g = document.createElement('div'); g.className = 'records';
+    [['Bestzeit', fmtTime(S.best.time)], ['Rekord-Kills', S.best.kills], ['Bestes Level', S.best.level]].forEach(([k, v]) => { const d = document.createElement('div'); d.textContent = k; const b = document.createElement('b'); b.textContent = v; d.prepend(b); g.appendChild(d); });
+    const w = document.createElement('p'); w.className = 'sub'; w.style.textAlign = 'center';
+    w.innerHTML = (S.name ? 'Salve, <b></b>! ' : '') + 'Du hast <span class="coins">' + S.denare + ' Denare</span>.';
+    if (S.name) w.querySelector('b').textContent = S.name;
+    info.append(g, w);
+  }
+  renderSyncBadge();
+  $('start').classList.add('show');
+}
 $('startBtn').onclick = () => { Sound.ensure(); $('start').classList.remove('show'); newGame(); state = 'play'; last = performance.now(); };
+$('shopBtn').onclick = () => openShop('start');
+$('setBtn').onclick = openSettings;
+showStart();
+if (Save.cfg()) Save.pull().then(r => { if (r === 'geladen') Save.syncStatus = '☁ Online-Stand geladen'; if (state === 'menu') showStart(); })
+  .catch(e => { Save.syncStatus = '⚠ Online-Stand nicht erreichbar (' + e.message + ') – spiele mit lokalem Stand'; renderSyncBadge(); });
 
 /* ======================= Hauptschleife (requestAnimationFrame + Delta-Time) ======================= */
 let last = performance.now();
