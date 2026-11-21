@@ -44,6 +44,17 @@
   .q { font-size:20px; margin:4px 0 14px; white-space:pre-line; }
   .fb { margin-top:12px; min-height:22px; font-size:14px; }
   .fb.good { color:var(--good); } .fb.bad { color:var(--bad); }
+  #banner { position:fixed; left:50%; top:76px; transform:translateX(-50%); max-width:90vw; padding:10px 22px; border-radius:12px; background:#000c; border:2px solid var(--gold); color:var(--gold); font-size:22px; font-weight:700; text-align:center; z-index:6; pointer-events:none; display:none; }
+  #banner.show { display:block; }
+  #bossWarning, #dashCue { position:fixed; left:50%; transform:translateX(-50%); max-width:90vw; padding:10px 22px; border-radius:12px; background:#2a0000e0; border:2px solid var(--bad); color:#ffd0d0; font-size:22px; font-weight:800; text-align:center; z-index:6; pointer-events:none; display:none; }
+  #bossWarning { top:76px; } #dashCue { top:132px; font-size:20px; }
+  #bossWarning.show, #dashCue.show { display:block; animation:pop .3s ease-out; }
+  #bossHud { position:fixed; left:50%; bottom:12px; transform:translateX(-50%); width:min(360px,80vw); z-index:4; pointer-events:none; display:none; text-shadow:0 1px 2px #000; }
+  #bossHud.show { display:block; }
+  #bossHud .row2 { display:flex; justify-content:space-between; gap:10px; font-size:14px; font-weight:700; margin-bottom:3px; }
+  #bossName { color:var(--gold); }
+  #bossBar { display:block; width:100%; height:14px; border:1px solid var(--line); border-radius:8px; background:#000a; overflow:hidden; -webkit-appearance:none; appearance:none; }
+  #bossBar::-webkit-progress-bar { background:#000a; } #bossBar::-webkit-progress-value { background:var(--bad); } #bossBar::-moz-progress-bar { background:var(--bad); }
   #flash { position:fixed; inset:0; pointer-events:none; opacity:0; transition:opacity .5s; z-index:5; }
   .onlytouch { display:none; } @media (pointer:coarse) { .onlytouch { display:inline; } .onlypc { display:none; } }
   .big { font-size:15px; padding:12px 22px; border-radius:10px; border:0; background:var(--gold); color:#000; font-weight:700; cursor:pointer; margin-top:16px; }
@@ -64,6 +75,7 @@
   .shopitem button { min-width:96px; padding:8px 10px; border-radius:8px; border:0; background:var(--gold); color:#000; font-weight:700; cursor:pointer; }
   .shopitem button:disabled { background:#2c2c48; color:#777; cursor:default; }
   .pips { color:var(--gold); letter-spacing:2px; font-size:12px; }
+  .records .wide { grid-column:1/-1; }
   .records { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:12px 0 4px; }
   .records div { background:#0004; border:1px solid var(--line); border-radius:10px; padding:8px; text-align:center; font-size:12px; color:#9a9ab8; }
   .records b { display:block; color:var(--gold); font-size:18px; }
@@ -76,6 +88,10 @@
 <body>
 <canvas id="c"></canvas>
 <div id="flash"></div>
+<div id="banner" role="status"></div>
+<div id="bossWarning" role="alert"></div>
+<div id="dashCue" role="alert"></div>
+<div id="bossHud"><div class="row2"><span id="bossName"></span><span id="bossHp"></span></div><progress id="bossBar" max="1" value="1"></progress></div>
 <div id="rotate">Tipp: Handy ins Querformat drehen – mehr Platz in der Arena.</div>
 <div id="hud">
   <div class="bar"><i id="hpFill"></i><span id="hpTxt"></span></div>
@@ -325,18 +341,73 @@ const CFG = {
   trostHeal: 5, wrongWeightAdd: 3, weightMax: 12, rightWeightDecay: 0.5,
   xpBase: 4, xpPerLevel: 3, magnet: 90, maxEnemies: 160,
   joyRadius: 55,      // Touch: Zugweite (px) für volles Tempo
-  joyDeadzone: 0.12   // Touch: Totzone (Anteil des Radius)
+  joyDeadzone: 0.12,  // Touch: Totzone (Anteil des Radius)
+  timeScale: 70,      // Gegner-HP wachsen mit Spielzeit: 1 + t / timeScale
+  // Flächenschaden (Schockwelle): Radius = baseRadius + radiusPerLevel x Stufe, Schaden = baseDamage + damagePerLevel x Stufe
+  reward: { victory: 50 },   // Siegbonus in Denaren (A11, nach dem Spieltest zu prüfen)
+  victoryText: { title: 'Sieg! Zenturio Maximus ist besiegt!', bonus: 'Siegbonus: +50 Denare', record: 'Neuer Rekord!', label: 'Schnellster Sieg', none: 'noch nicht erreicht' },
+  ring: { maxLevel: 5, baseRadius: 60, radiusPerLevel: 28, baseDamage: 6, damagePerLevel: 4, interval: 2.2 },
+  // Gegnerstufen nach Spielerlevel (festgelegt beim Erscheinen); Faktoren liegen auf der Zeitskalierung
+  tiers: [
+    { firstLevel: 1,  hp: 1,   speed: 1,   damage: 1 },
+    { firstLevel: 10, hp: 1.5, speed: 1.1, damage: 1.2 },
+    { firstLevel: 20, hp: 2.2, speed: 1.2, damage: 1.4 }
+  ],
+  // Endgegner (ein Boss pro Spiel); alle Werte exakt, ohne Stufen- oder Zeitskalierung
+  boss: {
+    level: 30,                 // erscheint, wenn der Level-Zaehler erstmals >= level ist
+    hp: 2000, speed: 40, damage: 15, radius: 28,
+    warningSeconds: 3,         // Warnung vor dem Erscheinen (Spielzeit)
+    dashInterval: 8,           // Sturmangriff: Start der Warnung bis Start der naechsten (Spielzeit); erster 8 s nach Erscheinen
+    dashWarning: 0.8,          // markierte Bahn vor dem Angriff
+    laneLength: 320, laneWidth: 80, dashSpeed: 400,   // Bahn (px) und Tempo; Dauer = laneLength / dashSpeed
+    spawnFactor: 2,            // Spawn-Intervalle (Wellen und Einzelspawns) x2, solange der Boss lebt
+    blitzFraction: 0.05,       // Jupiters Blitz: Anteil der Max-HP
+    name: 'Zenturio Maximus', warningText: 'Achtung! Zenturio Maximus naht!', dashText: 'Achtung, Sturmangriff!', lostText: 'Besiegt von Zenturio Maximus'
+  },
+  bannerSeconds: 3,   // Dauer einer Meldung in Spielzeit
+  tierMessages: [null, 'Stärkere Gegner kommen!', 'Noch stärkere Gegner!']   // je Stufe; Stufe 1 ohne Meldung
 };
+/* Tier (1, 2, 3) of an enemy that appears at player level `level`. */
+function tierOf(level) { let t = 1; CFG.tiers.forEach((x, i) => { if (level >= x.firstLevel) t = i + 1; }); return t; }
+/* Ring level in effect: never above the cap, also if something set it higher. */
+function ringLevel(p) { return Math.min(p.auraLevel, CFG.ring.maxLevel); }
+
+/* ======================= Test seams (issue #4, step 3) =======================
+   All defaults reproduce the game exactly as it plays without them. Tests set them by name
+   from page.evaluate (SEAMS, HOOKS, G, CFG, state are top-level globals of this classic script). */
+const SEAMS = {
+  loop: true,             // false: the requestAnimationFrame loop neither updates nor draws; tests call update(dt)
+  noAutoFire: false,      // true: no automatic bullets and no automatic shockwave (fireRing() stays callable)
+  noWaves: false,         // true: no wave spawns
+  noSpawns: false,        // true: no single (steady) spawns
+  noEnemyMove: false,     // true: enemies do not move
+  noContact: false,       // true: enemies do not damage the player on contact
+  noXp: false,            // true: collecting a gem adds no XP
+  forceEnemyType: null,   // 'skel' | 'leg': spawnEnemy() uses this type without a random draw
+  manualTimers: false,    // true: answer timers are queued in pendingTimers; runTimers() runs them
+  pendingTimers: []
+};
+// Called at openLevelUp() and endGame() with no arguments. A hook that returns true replaces the
+// default behaviour (the hook then sets state itself). Empty in the game.
+const HOOKS = {};
+function schedule(fn, ms) { if (SEAMS.manualTimers) SEAMS.pendingTimers.push({ fn, ms }); else setTimeout(fn, ms); }
+function runTimers() { const q = SEAMS.pendingTimers; SEAMS.pendingTimers = []; for (const t of q) t.fn(); }
 
 /* ======================= Upgrades ======================= */
 const UPGRADES = [
   { id: 'rate',   name: '+20 % Feuerrate',   desc: 'Die Waffe schießt schneller.',      apply: p => p.fireRate *= 1.2 },
   { id: 'multi',  name: '+1 Projektil',      desc: 'Ein zusätzliches Geschoss pro Schuss.', apply: p => p.projectiles += 1 },
   { id: 'speed',  name: '+15 % Tempo',       desc: 'Du bewegst dich schneller.',        apply: p => p.speed *= 1.15 },
-  { id: 'aura',   name: 'Flächenschaden',    desc: 'Eine Schockwelle trifft alle Gegner in der Nähe (stärker mit jeder Stufe).', apply: p => p.auraLevel += 1 },
+  { id: 'aura',   name: 'Flächenschaden',    desc: 'Eine Schockwelle trifft alle Gegner in der Nähe (stärker mit jeder Stufe).', apply: p => { p.auraLevel = Math.min(CFG.ring.maxLevel, p.auraLevel + 1); } },
   { id: 'heal',   name: 'Heilung (+35 HP)',  desc: 'Stellt sofort Lebenspunkte wieder her.', apply: p => { p.hp = Math.min(p.maxHp, p.hp + 35); } },
   { id: 'damage', name: '+25 % Schaden',     desc: 'Jedes Geschoss richtet mehr Schaden an.', apply: p => p.damage *= 1.25 }
 ];
+
+/* Upgrades that can be offered now: all except the ring at its maximum level. */
+function offerableUpgrades() { return UPGRADES.filter(u => !(u.id === 'aura' && G && ringLevel(G.p) >= CFG.ring.maxLevel)); }
+/* Combo bonus draw: one offerable upgrade other than the one just earned. */
+function drawComboBonus(upgrade) { return shuffle(offerableUpgrades().filter(u => u.id !== upgrade.id))[0]; }
 
 /* ======================= Hilfsfunktionen ======================= */
 const $ = id => document.getElementById(id);
@@ -416,7 +487,11 @@ const Save = {
   blank() { return { v: 1, name: '', denare: 0, best: { time: 0, kills: 0, level: 0 }, shop: {}, stats: { runs: 0, asked: 0, correct: 0 }, updatedAt: 0 }; },
   normalize(d) {
     const b = this.blank(); if (!d || typeof d !== 'object') return b;
-    return { ...b, ...d, best: { ...b.best, ...(d.best || {}) }, shop: { ...(d.shop || {}) }, stats: { ...b.stats, ...(d.stats || {}) } };
+    const n = { ...b, ...d, best: { ...b.best, ...(d.best || {}) }, shop: { ...(d.shop || {}) }, stats: { ...b.stats, ...(d.stats || {}) } };
+    const w = d.bestWin;   // optional victory record, lower is better; anything but { time > 0 } is dropped
+    if (!(w && typeof w === 'object' && !Array.isArray(w) && Number.isFinite(w.time) && w.time > 0)) delete n.bestWin;
+    else n.bestWin = { time: w.time };
+    return n;
   },
   loadLocal() { try { this.data = this.normalize(JSON.parse(localStorage.getItem(SAVE_KEY))); } catch (e) { this.data = this.blank(); } },
   persist(push = true) {
@@ -479,13 +554,15 @@ function newGame() {
   const L = id => Save.lvl(id), hp = CFG.playerHp + 10 * L('hp');
   G = {
     t: 0, kills: 0, level: 1, xp: 0, xpNeed: CFG.xpBase + CFG.xpPerLevel, pendingLevels: 0,
-    streak: 0, bestStreak: 0, denare: 0, jokers: L('joker'), banner: null,
+    streak: 0, bestStreak: 0, denare: 0, jokers: L('joker'), banner: null, bannerQueue: [], announcedTier: 1,
+    bossStarted: false, bossWarn: 0, boss: null, bossDown: false, won: false, lastHitBy: null,
     p: { x: W / 2, y: H / 2, r: CFG.playerRadius, hp, maxHp: hp, speed: CFG.playerSpeed * (1 + 0.05 * L('speed')),
          fireRate: 1 / CFG.fireInterval, projectiles: 1 + L('multi'), damage: CFG.bulletDamage * (1 + 0.08 * L('dmg')), auraLevel: 0,
          magnet: CFG.magnet + 25 * L('magnet'), fireCd: 0, auraCd: 2, invuln: 0, angle: 0 },
     enemies: [], bullets: [], gems: [], parts: [], rings: [], bolts: [], pendingBlitz: false,
     spawnCd: 1, waveCd: 6, shake: 0
   };
+  nextBanner();   // empty queue: hides a banner left from the previous run
   updateHud();
 }
 
@@ -530,17 +607,25 @@ function orientHint() { $('rotate').classList.toggle('on', innerHeight > innerWi
 addEventListener('resize', orientHint); orientHint();
 
 /* ======================= Spawning ======================= */
-function spawnEnemy() {
-  if (G.enemies.length >= CFG.maxEnemies) return;
+function bossAlive() { return !!G.boss && G.boss.hp > 0; }
+/* Random point just outside the arena edge. */
+function edgePoint() {
   const side = Math.floor(Math.random() * 4), m = 30;
   let x, y;
   if (side === 0) { x = rand(0, W); y = -m; } else if (side === 1) { x = W + m; y = rand(0, H); }
   else if (side === 2) { x = rand(0, W); y = H + m; } else { x = -m; y = rand(0, H); }
-  const scale = 1 + G.t / 70;
-  const skeleton = Math.random() < Math.min(0.55, 0.2 + G.t / 240);
+  return { x, y };
+}
+function spawnEnemy(forceType) {
+  if (G.enemies.length - (bossAlive() ? 1 : 0) >= CFG.maxEnemies) return;   // the boss does not count against the cap
+  const { x, y } = edgePoint();
+  const scale = 1 + G.t / CFG.timeScale;
+  const tier = tierOf(G.level), tf = CFG.tiers[tier - 1];   // fixed when the enemy appears; the shop never enters
+  const ft = forceType || SEAMS.forceEnemyType;
+  const skeleton = ft ? ft === 'skel' : Math.random() < Math.min(0.55, 0.2 + G.t / 240);
   G.enemies.push(skeleton
-    ? { type: 'skel', x, y, r: 11, hp: 6 * scale, maxHp: 6 * scale, speed: rand(80, 105), dmg: 7, hit: 0, xp: 1 }
-    : { type: 'leg',  x, y, r: 14, hp: 14 * scale, maxHp: 14 * scale, speed: rand(48, 66), dmg: 10, hit: 0, xp: 2 });
+    ? { type: 'skel', tier, x, y, r: 11, hp: 6 * scale * tf.hp, maxHp: 6 * scale * tf.hp, speed: rand(80, 105) * tf.speed, dmg: 7 * tf.damage, hit: 0, xp: 1 }
+    : { type: 'leg',  tier, x, y, r: 14, hp: 14 * scale * tf.hp, maxHp: 14 * scale * tf.hp, speed: rand(48, 66) * tf.speed, dmg: 10 * tf.damage, hit: 0, xp: 2 });
 }
 
 /* ======================= Effekte ======================= */
@@ -552,8 +637,72 @@ function flash(color) { const f = $('flash'); f.style.background = color; f.styl
   requestAnimationFrame(() => { f.style.transition = 'opacity .5s'; f.style.opacity = '0'; }); }
 
 /* ======================= Update ======================= */
+/* Shockwave (the "ring" weapon): one shot at the player's position. */
+function fireRing() {
+  const p = G.p, rc = CFG.ring, lv = ringLevel(p), R = rc.baseRadius + rc.radiusPerLevel * lv, dmg = rc.baseDamage + rc.damagePerLevel * lv;
+  G.rings.push({ x: p.x, y: p.y, r: 0, R, life: .35, max: .35 });
+  for (const e of G.enemies) if (Math.hypot(e.x - p.x, e.y - p.y) < R + e.r) damageEnemy(e, dmg);
+  Sound.hit();
+}
+
+/* Banners: one at a time, queued, timer in play time (advances only here, so it freezes while paused). */
+function showBanner(text) { G.bannerQueue.push(text); if (!G.banner) nextBanner(); }
+function nextBanner() {
+  const text = G.bannerQueue.shift(), el = $('banner');
+  if (text === undefined) { G.banner = null; el.classList.remove('show'); el.textContent = ''; return; }
+  G.banner = { text, left: CFG.bannerSeconds }; el.textContent = text; el.classList.add('show');
+}
+function updateBanner(dt) { if (G.banner && (G.banner.left -= dt) <= 0) nextBanner(); }
+/* After a level-up queue: announce the highest tier reached since the last message, once. */
+function announceTier() {
+  const tier = tierOf(G.level);
+  if (tier > G.announcedTier) { G.announcedTier = tier; const m = CFG.tierMessages[tier - 1]; if (m) showBanner(m); }
+}
+
+/* ---- Boss: trigger, warning, appearance, walk and dash. All timers are countdowns advanced by dt in update() only. ---- */
+const BOSS_EPS = 1e-9;   // tolerance for countdowns that sum 1/30 steps
+/* Once per run, when play resumes after the level-up queue and the level counter is at least CFG.boss.level. */
+function checkBossTrigger() {
+  if (G.bossStarted || G.level < CFG.boss.level) return;
+  G.bossStarted = true; G.bossWarn = CFG.boss.warningSeconds; updateBossUi();
+}
+function spawnBoss() {
+  const bc = CFG.boss, { x, y } = edgePoint();
+  const b = { type: 'boss', x, y, r: bc.radius, hp: bc.hp, maxHp: bc.hp, speed: bc.speed, dmg: bc.damage, hit: 0, xp: 0,
+              phase: 'walk', phaseT: 0, dashCd: bc.dashInterval, dashLeft: 0, dashHit: false, lane: null };
+  G.enemies.push(b); G.boss = b;
+}
+function startDashWarning(e) {
+  const bc = CFG.boss, p = G.p, d = Math.hypot(p.x - e.x, p.y - e.y) || 1;
+  e.lane = { x: e.x, y: e.y, dx: (p.x - e.x) / d, dy: (p.y - e.y) / d, length: bc.laneLength, width: bc.laneWidth };   // fixed: does not follow the player
+  e.phase = 'warn'; e.phaseT = bc.dashWarning; e.dashCd += bc.dashInterval;
+}
+function moveBoss(e, dt) {
+  const bc = CFG.boss, p = G.p, mv = !SEAMS.noEnemyMove;
+  e.dashCd -= dt;
+  if (e.phase === 'walk') {
+    if (mv) { const a = Math.atan2(p.y - e.y, p.x - e.x); e.x += Math.cos(a) * e.speed * dt; e.y += Math.sin(a) * e.speed * dt; }
+    if (e.dashCd <= BOSS_EPS) startDashWarning(e);
+  } else if (e.phase === 'warn') {   // stands still
+    e.phaseT -= dt;
+    if (e.phaseT <= BOSS_EPS) { e.phase = 'dash'; e.phaseT = bc.laneLength / bc.dashSpeed; e.dashLeft = bc.laneLength; e.dashHit = false; }
+  } else {                            // dash along the lane, no steering
+    if (mv) { const s = Math.min(bc.dashSpeed * dt, e.dashLeft); e.x += e.lane.dx * s; e.y += e.lane.dy * s; e.dashLeft -= s; }
+    e.phaseT -= dt;
+    if (e.phaseT <= BOSS_EPS) { e.phase = 'walk'; e.lane = null; }
+  }
+}
+function updateBossWarning(dt) {
+  if (G.bossWarn <= 0) return;
+  G.bossWarn -= dt;
+  if (G.bossWarn <= BOSS_EPS) { G.bossWarn = 0; spawnBoss(); announceTier(); }   // a tier message held back during the warning comes now
+}
+/* Victory: the boss death is detected in update and in closeQuiz after the Blitz; winGame shows the victory card. */
+function winGame() { G.won = true; showResult(true); }
+function checkVictory() { if (G.bossDown && !G.won) winGame(); }
+
 function update(dt) {
-  const p = G.p; G.t += dt;
+  const p = G.p; G.t += dt; updateBanner(dt);
 
   // Bewegung
   let dx = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
@@ -568,7 +717,7 @@ function update(dt) {
   for (const e of G.enemies) { const d = (e.x - p.x) ** 2 + (e.y - p.y) ** 2; if (d < best) { best = d; target = e; } }
   if (target) p.angle = Math.atan2(target.y - p.y, target.x - p.x);
   p.fireCd -= dt;
-  if (target && p.fireCd <= 0) {
+  if (target && p.fireCd <= 0 && !SEAMS.noAutoFire) {
     p.fireCd = 1 / p.fireRate;
     const n = p.projectiles;
     for (let i = 0; i < n; i++) {
@@ -581,19 +730,14 @@ function update(dt) {
   // Flächenschaden (Schockwelle)
   if (p.auraLevel > 0) {
     p.auraCd -= dt;
-    if (p.auraCd <= 0) {
-      p.auraCd = 2.2;
-      const R = 60 + 28 * p.auraLevel, dmg = 6 + 4 * p.auraLevel;
-      G.rings.push({ x: p.x, y: p.y, r: 0, R, life: .35, max: .35 });
-      for (const e of G.enemies) if (Math.hypot(e.x - p.x, e.y - p.y) < R + e.r) damageEnemy(e, dmg);
-      Sound.hit();
-    }
+    if (p.auraCd <= 0 && !SEAMS.noAutoFire) { p.auraCd = CFG.ring.interval; fireRing(); }
   }
 
   // Spawns (stetig + Wellen)
   G.spawnCd -= dt; G.waveCd -= dt;
-  if (G.spawnCd <= 0) { G.spawnCd = Math.max(0.25, 1.1 - G.t / 120); spawnEnemy(); }
-  if (G.waveCd <= 0) { G.waveCd = Math.max(4, 8 - G.t / 40); const n = 4 + Math.floor(G.t / 12); for (let i = 0; i < n; i++) spawnEnemy(); }
+  const sf = bossAlive() ? CFG.boss.spawnFactor : 1;   // half frequency while the boss lives (wave size unchanged)
+  if (G.spawnCd <= 0 && !SEAMS.noSpawns) { G.spawnCd = sf * Math.max(0.25, 1.1 - G.t / 120); spawnEnemy(); }
+  if (G.waveCd <= 0 && !SEAMS.noWaves) { G.waveCd = sf * Math.max(4, 8 - G.t / 40); const n = 4 + Math.floor(G.t / 12); for (let i = 0; i < n; i++) spawnEnemy(); }
 
   // Geschosse
   for (const b of G.bullets) {
@@ -609,21 +753,30 @@ function update(dt) {
   // Gegner
   for (const e of G.enemies) {
     if (e.hp <= 0) continue;
-    const a = Math.atan2(p.y - e.y, p.x - e.x);
-    e.x += Math.cos(a) * e.speed * dt; e.y += Math.sin(a) * e.speed * dt; e.hit = Math.max(0, e.hit - dt);
-    if (p.invuln <= 0 && Math.hypot(p.x - e.x, p.y - e.y) < p.r + e.r) hurtPlayer(e.dmg);
+    if (e.type === 'boss') moveBoss(e, dt);
+    else if (!SEAMS.noEnemyMove) { const a = Math.atan2(p.y - e.y, p.x - e.x); e.x += Math.cos(a) * e.speed * dt; e.y += Math.sin(a) * e.speed * dt; }
+    e.hit = Math.max(0, e.hit - dt);
+    // the dash hit is the contact hit: at most one hit per dash
+    if (!SEAMS.noContact && p.invuln <= 0 && Math.hypot(p.x - e.x, p.y - e.y) < p.r + e.r && !(e.phase === 'dash' && e.dashHit)) {
+      if (e.phase === 'dash') e.dashHit = true;
+      G.lastHitBy = e.type; hurtPlayer(e.dmg);
+    }
   }
   // Gegner leicht voneinander abstoßen (billig, nur Nachbarn per Zufallsstichprobe)
-  for (let i = 0; i < G.enemies.length; i++) { const a = G.enemies[i], b = G.enemies[(i * 7 + 3) % G.enemies.length];
-    if (a === b) continue; const d = Math.hypot(a.x - b.x, a.y - b.y), min = a.r + b.r;
+  if (!SEAMS.noEnemyMove) for (let i = 0; i < G.enemies.length; i++) { const a = G.enemies[i], b = G.enemies[(i * 7 + 3) % G.enemies.length];
+    if (a === b || a.type === 'boss' || b.type === 'boss') continue;   // the boss is not pushed
+    const d = Math.hypot(a.x - b.x, a.y - b.y), min = a.r + b.r;
     if (d > 0 && d < min) { const k = (min - d) / 2 / d; a.x += (a.x - b.x) * k; a.y += (a.y - b.y) * k; b.x -= (a.x - b.x) * k; b.y -= (a.y - b.y) * k; } }
   G.enemies = G.enemies.filter(e => e.hp > 0);
+  updateBossWarning(dt);
+  checkVictory();   // before the level-up and before the game-over check
+  if (G.won) return;   // victory wins over a death in the same frame; a waiting level-up is discarded
 
   // XP-Kristalle
   for (const g of G.gems) {
     const d = Math.hypot(p.x - g.x, p.y - g.y);
     if (d < p.magnet) { g.x += (p.x - g.x) / d * 320 * dt; g.y += (p.y - g.y) / d * 320 * dt; }
-    if (d < p.r + 8) { g.taken = true; G.xp += g.v; Sound.gem(); }
+    if (d < p.r + 8) { g.taken = true; if (!SEAMS.noXp) G.xp += g.v; Sound.gem(); }
   }
   G.gems = G.gems.filter(g => !g.taken);
 
@@ -646,8 +799,9 @@ function update(dt) {
 function damageEnemy(e, dmg) {
   e.hp -= dmg; e.hit = 0.08; Sound.hit();
   if (e.hp <= 0) {
-    G.kills++; burst(e.x, e.y, e.type === 'leg' ? '#ff7043' : '#eceff1', 12, 200);
-    G.gems.push({ x: e.x, y: e.y, v: e.xp });
+    G.kills++;
+    if (e.type === 'boss') { G.bossDown = true; burst(e.x, e.y, '#ffd54a', 36, 320); burst(e.x, e.y, '#ff7043', 24, 240); burst(e.x, e.y, '#ffffff', 16, 180); G.shake = 14; }   // cartoon, no gem
+    else { burst(e.x, e.y, e.type === 'leg' ? '#ff7043' : '#eceff1', 12, 200); G.gems.push({ x: e.x, y: e.y, v: e.xp }); }
   }
 }
 function hurtPlayer(d) {
@@ -655,11 +809,53 @@ function hurtPlayer(d) {
 }
 
 /* ======================= Rendering ======================= */
+/* Look of tier 2 and 3 (tier 1 is drawn inline, as before). Only the drawing is larger; the hit radius e.r stays. */
+function drawTierEnemy(e) {
+  const t3 = e.tier >= 3, s = t3 ? 1.3 : 1.15, trim = t3 ? '#ffd54a' : '#cd7f32', r = e.r, flashed = e.hit > 0;
+  ctx.save(); ctx.translate(e.x, e.y); ctx.scale(s, s);
+  if (e.type === 'leg') {
+    if (t3) { ctx.fillStyle = flashed ? '#fff' : '#6a1b9a'; ctx.beginPath(); ctx.moveTo(-r - 3, -r); ctx.lineTo(r + 3, -r); ctx.lineTo(r + 6, r + 4); ctx.lineTo(-r - 6, r + 4); ctx.closePath(); ctx.fill(); }  // Umhang
+    ctx.fillStyle = flashed ? '#fff' : '#b71c1c'; ctx.fillRect(-r, -r, r * 2, r * 2);
+    ctx.fillStyle = flashed ? '#fff' : '#ffca28'; ctx.fillRect(-r, -r, r * 2, 4);                                // Helmkamm
+    ctx.fillStyle = flashed ? '#fff' : '#8d6e63'; ctx.strokeStyle = trim; ctx.lineWidth = t3 ? 2 : 1.5;        // Schild
+    ctx.beginPath(); ctx.ellipse(-r - 2, 2, 4, 8, 0, 0, 6.283); ctx.fill(); ctx.stroke();
+  } else {
+    ctx.fillStyle = flashed ? '#fff' : (t3 ? '#eceff1' : '#cfd8dc'); ctx.strokeStyle = trim; ctx.lineWidth = t3 ? 2.5 : 2;
+    ctx.beginPath(); ctx.moveTo(0, -r); ctx.lineTo(r, r); ctx.lineTo(-r, r); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#111'; ctx.fillRect(-4, -1, 3, 3); ctx.fillRect(1, -1, 3, 3);                               // Augen
+    ctx.fillStyle = flashed ? '#fff' : trim; ctx.beginPath(); ctx.moveTo(-r * .6, -r * .3); ctx.quadraticCurveTo(0, -r * 1.6, r * .6, -r * .3); ctx.closePath(); ctx.fill();  // Helm
+    if (t3) { ctx.fillStyle = flashed ? '#fff' : '#e53935'; ctx.fillRect(-1.5, -r * 1.4, 3, 6); }               // Helmbusch
+  }
+  ctx.restore();
+}
+/* Boss "Zenturio Maximus": big armoured centurion (cartoon). The hit radius e.r is the body. */
+function drawBoss(e) {
+  const r = e.r, f = e.hit > 0, dash = e.phase === 'dash';
+  ctx.save(); ctx.translate(e.x, e.y);
+  ctx.fillStyle = f ? '#fff' : '#6a1b9a'; ctx.beginPath(); ctx.moveTo(-r - 6, -r * .6); ctx.lineTo(r + 6, -r * .6); ctx.lineTo(r + 12, r + 10); ctx.lineTo(-r - 12, r + 10); ctx.closePath(); ctx.fill();   // Umhang
+  ctx.fillStyle = f ? '#fff' : (dash ? '#ff5252' : '#b71c1c'); ctx.strokeStyle = '#ffd54a'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(0, 0, r, 0, 6.283); ctx.fill(); ctx.stroke();   // Koerper
+  ctx.fillStyle = f ? '#fff' : '#ffca28'; ctx.beginPath(); ctx.arc(0, -r * .35, r * .62, Math.PI, 0); ctx.closePath(); ctx.fill();   // Helm
+  ctx.fillStyle = f ? '#fff' : '#e53935'; ctx.fillRect(-4, -r * 1.45, 8, r * .8);   // Helmbusch
+  ctx.fillStyle = '#111'; ctx.fillRect(-9, -2, 6, 5); ctx.fillRect(3, -2, 6, 5);   // Augen
+  ctx.fillStyle = f ? '#fff' : '#8d6e63'; ctx.beginPath(); ctx.ellipse(-r - 4, 4, 8, 16, 0, 0, 6.283); ctx.fill(); ctx.stroke();   // Schild
+  ctx.restore();
+}
+/* Marked dash lane (from the boss centre towards the player position at the start of the warning). */
+function drawLane(e) {
+  const l = e.lane; if (!l) return;
+  const warn = e.phase === 'warn', pulse = warn ? .22 + .12 * Math.sin(G.t * 20) : .32;
+  ctx.save(); ctx.translate(l.x, l.y); ctx.rotate(Math.atan2(l.dy, l.dx));
+  ctx.fillStyle = `rgba(255,60,60,${pulse})`; ctx.fillRect(0, -l.width / 2, l.length, l.width);
+  ctx.strokeStyle = '#ff5252'; ctx.lineWidth = 3; ctx.setLineDash(warn ? [14, 8] : []); ctx.strokeRect(0, -l.width / 2, l.length, l.width);
+  ctx.restore();
+}
 function draw() {
   ctx.save();
   ctx.fillStyle = '#0d0d16'; ctx.fillRect(0, 0, W, H);
   if (!G) { ctx.restore(); return; }
-  if (G.shake > 0) ctx.translate(rand(-G.shake, G.shake), rand(-G.shake, G.shake));
+  const drand = SEAMS.loop ? rand : () => 0;   // stopped loop: draw() consumes no Math.random
+  if (G.shake > 0) ctx.translate(drand(-G.shake, G.shake), drand(-G.shake, G.shake));
 
   // Arena-Gitter
   ctx.strokeStyle = '#161626'; ctx.lineWidth = 1; ctx.beginPath();
@@ -671,9 +867,13 @@ function draw() {
 
   for (const g of G.gems) { ctx.fillStyle = '#4fc3f7'; ctx.save(); ctx.translate(g.x, g.y); ctx.rotate(Math.PI / 4); ctx.fillRect(-4, -4, 8, 8); ctx.restore(); }
 
+  for (const e of G.enemies) if (e.type === 'boss') drawLane(e);
+
   for (const e of G.enemies) {
+    if (e.type === 'boss') { drawBoss(e); continue; }
     ctx.fillStyle = e.hit > 0 ? '#fff' : (e.type === 'leg' ? '#b71c1c' : '#cfd8dc');
-    if (e.type === 'leg') {
+    if (e.tier > 1) drawTierEnemy(e);
+    else if (e.type === 'leg') {
       ctx.fillRect(e.x - e.r, e.y - e.r, e.r * 2, e.r * 2);
       ctx.fillStyle = '#ffca28'; ctx.fillRect(e.x - e.r, e.y - e.r, e.r * 2, 4);      // Helmkamm
     } else {
@@ -686,15 +886,15 @@ function draw() {
   ctx.fillStyle = '#ffe082'; for (const b of G.bullets) { ctx.beginPath(); ctx.arc(b.x, b.y, 4, 0, 6.283); ctx.fill(); }
 
   const p = G.p;
-  if (p.auraLevel > 0) { ctx.strokeStyle = '#4fc3f733'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(p.x, p.y, 60 + 28 * p.auraLevel, 0, 6.283); ctx.stroke(); }
+  if (p.auraLevel > 0) { ctx.strokeStyle = '#4fc3f733'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(p.x, p.y, CFG.ring.baseRadius + CFG.ring.radiusPerLevel * ringLevel(p), 0, 6.283); ctx.stroke(); }
   if (p.invuln <= 0 || Math.floor(p.invuln * 20) % 2) {
     ctx.fillStyle = '#66bb6a'; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 6.283); ctx.fill();
     ctx.strokeStyle = '#e8f5e9'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + Math.cos(p.angle) * (p.r + 8), p.y + Math.sin(p.angle) * (p.r + 8)); ctx.stroke();
   }
 
   for (const b of G.bolts) {   // Blitze von oben
-    ctx.strokeStyle = `rgba(255,235,120,${b.life / .3})`; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(b.x + rand(-20, 20), 0);
-    for (let y = 0; y < b.y; y += 40) ctx.lineTo(b.x + rand(-14, 14), y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    ctx.strokeStyle = `rgba(255,235,120,${b.life / .3})`; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(b.x + drand(-20, 20), 0);
+    for (let y = 0; y < b.y; y += 40) ctx.lineTo(b.x + drand(-14, 14), y); ctx.lineTo(b.x, b.y); ctx.stroke();
   }
   for (const q of G.parts) { ctx.globalAlpha = clamp(q.life / q.max, 0, 1); ctx.fillStyle = q.color; ctx.fillRect(q.x, q.y, q.size, q.size); }
   ctx.globalAlpha = 1;
@@ -714,16 +914,30 @@ function updateHud() {
   $('xpTxt').textContent = 'XP ' + G.xp + ' / ' + G.xpNeed;
   $('lvl').textContent = G.level; $('time').textContent = fmtTime(G.t); $('kills').textContent = G.kills;
   $('streak').textContent = G.streak; $('den').textContent = Save.data.denare + G.denare;
+  updateBossUi();
 }
+/* Boss warning, name, health and dash cue are DOM elements (readable by tests), updated here and not in draw(). */
+function updateBossUi() {
+  const b = bossAlive() ? G.boss : null;
+  $('bossWarning').classList.toggle('show', G.bossWarn > 0);
+  $('dashCue').classList.toggle('show', !!b && b.phase === 'warn');
+  $('bossHud').classList.toggle('show', !!b);
+  if (b) {
+    $('bossHp').textContent = Math.max(1, Math.ceil(b.hp - 1e-6)) + ' / ' + b.maxHp;   // rounded up, with a tolerance for float noise
+    $('bossBar').max = b.maxHp; $('bossBar').value = Math.max(0, b.hp);
+  }
+}
+$('bossWarning').textContent = CFG.boss.warningText; $('dashCue').textContent = CFG.boss.dashText; $('bossName').textContent = CFG.boss.name;
 
 /* ======================= Level-Up-Modal: Upgrade wählen -> Latein-Frage ======================= */
 let quizHandler = null;
 function openLevelUp() {
+  if (HOOKS.levelUp && HOOKS.levelUp() === true) return;
   state = 'quiz';
   for (const k in keys) keys[k] = false;       // keine "hängenden" Tasten
   joyReset();                                   // Joystick loslassen
   G.pendingLevels--;
-  const offers = shuffle(UPGRADES).slice(0, 3);
+  const offers = shuffle(offerableUpgrades()).slice(0, 3);
   const card = $('modalCard'); card.innerHTML = '';
   const h = document.createElement('h2'); h.textContent = 'Level ' + G.level + '!';
   const s = document.createElement('p'); s.className = 'sub'; s.textContent = 'Wähle ein Upgrade – du bekommst es nur bei richtiger Latein-Antwort.';
@@ -781,19 +995,19 @@ function askQuestion(upgrade) {
       upgrade.apply(G.p); Sound.right(); flash('#00e676');
       fb.className = 'fb good'; fb.textContent = `✔ Richtig! +${coins} Denare. ` + q.explanation;
       if (G.streak % 3 === 0) {
-        const bonus = shuffle(UPGRADES.filter(u => u.id !== upgrade.id))[0];
+        const bonus = drawComboBonus(upgrade);
         bonus.apply(G.p); G.pendingBlitz = true;
         const cb = document.createElement('div'); cb.className = 'combo';
         cb.textContent = `⚡ COMBO ×${G.streak}! Bonus-Upgrade: ${bonus.name} + Jupiters Blitz!`;
         card.insertBefore(cb, fb); Sound.combo();
-        setTimeout(closeQuiz, 1600);
-      } else setTimeout(closeQuiz, 900);
+        schedule(closeQuiz, 1600);
+      } else schedule(closeQuiz, 900);
     } else {
       G.streak = 0;
       btns[i].classList.add('wrong'); Sound.wrong();
       G.p.hp = Math.min(G.p.maxHp, G.p.hp + CFG.trostHeal);
       fb.className = 'fb bad'; fb.textContent = '✘ Falsch – kein Upgrade (Trost: +' + CFG.trostHeal + ' HP). ' + q.explanation;
-      setTimeout(closeQuiz, 2200);
+      schedule(closeQuiz, 2200);
     }
     updateHud();
   };
@@ -806,7 +1020,7 @@ let jokerHandler = null;
 function jupiterBlitz() {
   const p = G.p;
   for (const e of G.enemies) {
-    damageEnemy(e, e.maxHp * 0.7 + 10);
+    damageEnemy(e, e.type === 'boss' ? e.maxHp * CFG.boss.blitzFraction : e.maxHp * 0.7 + 10);
     G.bolts.push({ x: e.x, y: e.y, life: .3 });
   }
   G.rings.push({ x: p.x, y: p.y, r: 0, R: Math.max(W, H), life: .5, max: .5 });
@@ -817,17 +1031,27 @@ function closeQuiz() {
   $('modal').classList.remove('show'); quizHandler = null;
   if (G.pendingLevels > 0) { openLevelUp(); return; }   // mehrere Level-Ups hintereinander
   state = 'play'; last = performance.now();
-  if (G.pendingBlitz) { G.pendingBlitz = false; jupiterBlitz(); }
+  checkBossTrigger();                  // the boss warning comes first; a tier message waits until the boss appears
+  if (G.bossWarn <= 0) announceTier();
+  if (G.pendingBlitz) { G.pendingBlitz = false; jupiterBlitz(); checkVictory(); }   // winGame closes the modal and the queue
 }
 
 /* ======================= Game Over ======================= */
 function endGame() {
-  state = 'over'; $('modal').classList.remove('show'); quizHandler = null; jokerHandler = null;
+  if (HOOKS.end && HOOKS.end() === true) return;
+  showResult(false);
+}
+/** Shared result card of a lost run (victory = false) and of a won run (victory = true). */
+function showResult(victory) {
+  state = 'over'; $('modal').classList.remove('show'); quizHandler = null; jokerHandler = null; G.pendingLevels = 0; G.pendingBlitz = false;
   const rate = Quiz.asked ? Math.round(Quiz.correct / Quiz.asked * 100) : 0;
   // Denare abrechnen & Rekorde prüfen
   const fromKills = Math.floor(G.kills / 10), fromTime = 2 * Math.floor(G.t / 60);
-  const earned = G.denare + fromKills + fromTime;
+  const bonus = victory ? CFG.reward.victory : 0;
+  const earned = G.denare + fromKills + fromTime + bonus;
   const S = Save.data, rec = [];
+  let newWin = false;
+  if (victory && !(S.bestWin && S.bestWin.time <= G.t)) { S.bestWin = { time: G.t }; newWin = true; }
   if (G.t > S.best.time) { S.best.time = G.t; rec.push('Zeit'); }
   if (G.kills > S.best.kills) { S.best.kills = G.kills; rec.push('Kills'); }
   if (G.level > S.best.level) { S.best.level = G.level; rec.push('Level'); }
@@ -836,9 +1060,15 @@ function endGame() {
   Save.persist();
 
   const card = $('overCard'); card.innerHTML = '';
-  const h = document.createElement('h2'); h.textContent = 'Game Over';
+  const h = document.createElement('h2'); h.textContent = victory ? CFG.victoryText.title : 'Game Over';
+  if (victory) h.id = 'victoryTitle';
   card.appendChild(h);
-  if (rec.length && !firstRun) {
+  if (victory && newWin) {
+    const r = document.createElement('div'); r.className = 'record'; r.id = 'victoryRecord'; r.textContent = '🏆 ' + CFG.victoryText.record;
+    card.appendChild(r); setTimeout(Sound.record, 250); setTimeout(() => flash('#ffd54a'), 250);
+  }
+  if (!victory && G.lastHitBy === 'boss') { const l = document.createElement('p'); l.className = 'sub'; l.textContent = CFG.boss.lostText; card.appendChild(l); }
+  if (!victory && rec.length && !firstRun) {
     const r = document.createElement('div'); r.className = 'record'; r.textContent = '🏆 NEUER REKORD: ' + rec.join(', ') + '!';
     card.appendChild(r); setTimeout(Sound.record, 250); setTimeout(() => flash('#ffd54a'), 250);
   }
@@ -846,7 +1076,8 @@ function endGame() {
   row('Überlebenszeit', fmtTime(G.t), fmtTime(S.best.time)); row('Kills', G.kills, S.best.kills); row('Erreichtes Level', G.level, S.best.level);
   row('Latein-Quote', Quiz.asked ? `${Quiz.correct} / ${Quiz.asked} richtig (${rate} %)` : 'keine Fragen beantwortet');
   if (G.bestStreak >= 2) row('Längste Serie', '🔥 ' + G.bestStreak);
-  row('Denare verdient', `+${earned}  (Latein ${G.denare} · Kills ${fromKills} · Zeit ${fromTime})  → ${S.denare}`);
+  if (victory) { const d = document.createElement('p'); d.className = 'sub'; d.id = 'victoryBonus'; d.textContent = CFG.victoryText.bonus; card.appendChild(d); }
+  row('Denare verdient', `+${earned}  (Latein ${G.denare} · Kills ${fromKills} · Zeit ${fromTime}${victory ? ' · Sieg ' + bonus : ''})  → ${S.denare}`);
   const t = document.createElement('p'); t.className = 'sub'; t.style.marginTop = '14px';
   t.textContent = Quiz.wrongSet.size ? 'Zum Nachlernen (falsch beantwortet):' : (Quiz.asked ? 'Alles richtig – stark!' : '');
   card.appendChild(t);
@@ -928,6 +1159,8 @@ function showStart() {
   if (S.stats.runs > 0) {
     const g = document.createElement('div'); g.className = 'records';
     [['Bestzeit', fmtTime(S.best.time)], ['Rekord-Kills', S.best.kills], ['Bestes Level', S.best.level]].forEach(([k, v]) => { const d = document.createElement('div'); d.textContent = k; const b = document.createElement('b'); b.textContent = v; d.prepend(b); g.appendChild(d); });
+    const bw = document.createElement('div'); bw.className = 'wide'; bw.textContent = CFG.victoryText.label;
+    const bv = document.createElement('b'); bv.textContent = S.bestWin ? fmtTime(S.bestWin.time) : CFG.victoryText.none; bw.prepend(bv); g.appendChild(bw);
     const w = document.createElement('p'); w.className = 'sub'; w.style.textAlign = 'center';
     w.innerHTML = (S.name ? 'Salve, <b></b>! ' : '') + 'Du hast <span class="coins">' + S.denare + ' Denare</span>.';
     if (S.name) w.querySelector('b').textContent = S.name;
@@ -947,6 +1180,7 @@ if (Save.cfg()) Save.pull().then(r => { if (r === 'geladen') Save.syncStatus = '
 let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (!SEAMS.loop) { requestAnimationFrame(frame); return; }
   if (state === 'play') update(dt);
   draw();
   requestAnimationFrame(frame);
