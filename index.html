@@ -1014,7 +1014,7 @@ function update(dt) {
   // Partikel
   for (const q of G.parts) { q.x += q.vx * dt; q.y += q.vy * dt; q.life -= dt; q.vx *= 0.94; q.vy *= 0.94; }
   G.parts = G.parts.filter(q => q.life > 0);
-  for (const r of G.rings) { r.life -= dt; r.r = r.R * (1 - r.life / r.max); }
+  for (const r of G.rings) { r.life = Math.min(r.max, r.life - dt); r.r = Math.max(0, r.R * (1 - r.life / r.max)); }
   G.rings = G.rings.filter(r => r.life > 0);
   for (const b of G.bolts) b.life -= dt; G.bolts = G.bolts.filter(b => b.life > 0);
   G.shake = Math.max(0, G.shake - dt * 30);
@@ -1094,7 +1094,7 @@ function draw() {
   for (let y = 0; y < H; y += 48) { ctx.moveTo(0, y); ctx.lineTo(W, y); }
   ctx.stroke();
 
-  for (const r of G.rings) { ctx.strokeStyle = `rgba(100,200,255,${r.life / r.max})`; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(r.x, r.y, r.r, 0, 6.283); ctx.stroke(); }
+  for (const r of G.rings) { ctx.strokeStyle = `rgba(100,200,255,${r.life / r.max})`; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(r.x, r.y, Math.max(0, r.r), 0, 6.283); ctx.stroke(); }
 
   for (const g of G.gems) { ctx.fillStyle = '#4fc3f7'; ctx.save(); ctx.translate(g.x, g.y); ctx.rotate(Math.PI / 4); ctx.fillRect(-4, -4, 8, 8); ctx.restore(); }
 
@@ -1463,7 +1463,7 @@ function frame(now) {
   lastFrameAt = now; watchdogFired = false;   // per-frame cost of the watchdog: this assignment
   if (!runUi && state === 'play') setRunUi(true);
   try {   // an error in update or draw is reported (Diag) and does not stop the loop silently
-    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = now;
     if (SEAMS.loop) {
       if (state === 'play') update(dt);
       draw();
