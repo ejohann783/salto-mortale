@@ -30,6 +30,8 @@
   .stat b { color:var(--gold); }
   .overlay { position:fixed; inset:0; background:#000c; display:none; align-items:center; justify-content:center; padding:16px; z-index:10; }
   .overlay.show { display:flex; }
+  #topicList { margin:10px 0; } #topicList label.topic { display:flex; align-items:center; gap:8px; padding:6px 0; font-size:16px; cursor:pointer; } #topicList input { width:20px; height:20px; }
+  #packDel .row { align-items:center; margin:6px 0; } #packDel span { flex:1; overflow-wrap:anywhere; }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:22px; width:min(640px,100%); max-height:94vh; overflow:auto; box-shadow:0 10px 40px #000; }
   h1,h2 { margin:0 0 6px; } h2 { font-size:22px; }
   .sub { color:#9a9ab8; margin:0 0 16px; font-size:14px; }
@@ -114,6 +116,7 @@
     <span class="onlytouch">Tipp: Handy quer halten.</span><br>
     <b>Neu:</b> 3 richtige Antworten in Folge = ⚡ Combo-Bonus. Richtige Antworten bringen Denare – damit kaufst du im Shop dauerhafte Verbesserungen.</p>
     <div id="startInfo"></div>
+    <div id="topicList"></div>
     <div class="row">
       <button class="big" id="startBtn">Spiel starten</button>
       <button class="big alt" id="shopBtn">🏛 Shop</button>
@@ -135,8 +138,7 @@
  *   options      : 2–4 Antwortmöglichkeiten (Strings)
  *   correctIndex : Index (0–3) der richtigen Antwort in "options"
  *   explanation  : Erklärung, wird im Game-Over-Screen zum Nachlernen gezeigt
- * Aktueller Inhalt: Latein-Test 25.11.2026 (Salto 1A/1B), automatisch aus den Lernplaner-Blättern 1–6 erzeugt.
- * Aktueller Inhalt: Latein-Test 25.11.2026 (Salto 1A/1B), automatisch aus den Lernplaner-Blättern 1–6 erzeugt.
+ * Inhalt: Latein, Salto 1A/1B
  * Die Reihenfolge der Optionen wird im Spiel automatisch gemischt.
  * Mehr als 15 Einträge sind kein Problem.
  * ====================================================================== */
@@ -492,18 +494,98 @@ const Sound = (() => {
   };
 })();
 
+/* ======================= Inhaltspakete (ADR-0006): parsePack + Packs-Speicher ======================= */
+/* Imported content is untrusted: JSON.parse only, every field checked, a copy with format fields only is kept.
+ * Packs live in localStorage (keys salto-pack-v1:<id>, salto-topic-v1), never in the save game or the backup. */
+const PACK_LIMITS = { fileChars: 400000, questions: 1000, qText: 1000, optText: 400, explText: 1000, packs: 10, totalChars: 1500000 };
+const PACK_REJECT = 'Datei nicht geladen: ';
+const PACK_KEY = 'salto-pack-v1:', TOPIC_KEY = 'salto-topic-v1', LATIN_ID = 'latin';
+
+function parsePack(text) {
+  const L = PACK_LIMITS;
+  const fail = error => ({ ok: false, pack: null, loaded: 0, skipped: 0, error });
+  if (typeof text !== 'string') return fail('Die Datei ist kein gültiges JSON.');
+  if (text.length > L.fileChars) return fail('Die Datei ist zu groß.');
+  let d;
+  try { d = JSON.parse(text); } catch (e) { return fail('Die Datei ist kein gültiges JSON.'); }
+  if (!d || typeof d !== 'object' || Array.isArray(d)) return fail('Die Datei ist kein gültiges Lernpaket.');
+  if (d.format !== 1) return fail('Das Format der Datei wird nicht unterstützt.');
+  if (typeof d.id !== 'string' || !/^[a-z0-9-]{1,40}$/.test(d.id) || d.id === LATIN_ID) return fail('Die Kennung (id) des Pakets fehlt oder ist ungültig.');
+  if (typeof d.title !== 'string' || !d.title.trim() || d.title.length > 40) return fail('Der Titel des Pakets fehlt oder ist ungültig.');
+  if (!Number.isInteger(d.version) || d.version < 1) return fail('Die Version des Pakets fehlt oder ist ungültig.');
+  if (!Array.isArray(d.questions)) return fail('Die Datei enthält keine gültige Frage.');
+  if (d.questions.length > L.questions) return fail('Die Datei enthält zu viele Fragen (höchstens 1.000).');
+  const good = [];
+  const text1 = (v, max) => typeof v === 'string' && v.trim().length > 0 && v.length <= max;
+  for (const q of d.questions) {
+    if (!q || typeof q !== 'object') continue;
+    if (!text1(q.question, L.qText) || !text1(q.explanation, L.explText)) continue;
+    if (!Array.isArray(q.options) || q.options.length < 2 || q.options.length > 4) continue;
+    if (!q.options.every(o => text1(o, L.optText))) continue;
+    if (!Number.isInteger(q.correctIndex) || q.correctIndex < 0 || q.correctIndex >= q.options.length) continue;
+    good.push({ question: q.question, options: q.options.slice(), correctIndex: q.correctIndex, explanation: q.explanation });
+  }
+  if (!good.length) return fail('Die Datei enthält keine gültige Frage.');
+  return { ok: true, pack: { format: 1, id: d.id, title: d.title, version: d.version, questions: good }, loaded: good.length, skipped: d.questions.length - good.length, error: '' };
+}
+
+const Packs = {
+  _ids() {
+    const ids = [];
+    try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith(PACK_KEY)) ids.push(k.slice(PACK_KEY.length)); } } catch (e) { /* storage blocked */ }
+    return ids;
+  },
+  /* Stored pack, validated again on every read; damaged or edited = missing (null). */
+  get(id) {
+    if (typeof id !== 'string' || id === LATIN_ID) return null;
+    let raw; try { raw = localStorage.getItem(PACK_KEY + id); } catch (e) { return null; }
+    if (raw === null) return null;
+    const r = parsePack(raw);
+    return r.ok && r.pack.id === id ? r.pack : null;
+  },
+  list() { return this._ids().map(id => this.get(id)).filter(Boolean); },
+  /* Returns {ok, error}; on failure nothing is changed. error is the full German text for the player. */
+  save(pack) {
+    const r = parsePack(JSON.stringify(pack));
+    if (!r.ok) return { ok: false, error: PACK_REJECT + r.error };
+    const p = r.pack, ids = this._ids(), exists = ids.includes(p.id);
+    if (!exists && this.list().length >= PACK_LIMITS.packs) return { ok: false, error: PACK_REJECT + 'Es sind schon 10 Themen gespeichert. Lösche zuerst ein Thema.' };
+    const raw = JSON.stringify(p);
+    let total = raw.length;
+    try { for (const id of ids) if (id !== p.id) total += (localStorage.getItem(PACK_KEY + id) || '').length; } catch (e) { /* counted as far as readable */ }
+    if (total > PACK_LIMITS.totalChars) return { ok: false, error: 'Nicht genug Speicher für Themen. Lösche ein anderes Thema und versuche es noch einmal.' };
+    try { localStorage.setItem(PACK_KEY + p.id, raw); } catch (e) { return { ok: false, error: 'Nicht genug Speicher auf diesem Gerät. Lösche ein anderes Thema und versuche es noch einmal.' }; }
+    return { ok: true, error: '' };
+  },
+  remove(id) {
+    if (id === LATIN_ID) return;
+    try { localStorage.removeItem(PACK_KEY + id); if (localStorage.getItem(TOPIC_KEY) === id) localStorage.removeItem(TOPIC_KEY); } catch (e) { /* storage blocked */ }
+  },
+  /* Chosen topic id; Latin if unset, missing or damaged. */
+  topic() {
+    let id; try { id = localStorage.getItem(TOPIC_KEY); } catch (e) { return LATIN_ID; }
+    return id && this.get(id) ? id : LATIN_ID;
+  },
+  setTopic(id) {
+    try { if (id === LATIN_ID) localStorage.removeItem(TOPIC_KEY); else if (this.get(id)) localStorage.setItem(TOPIC_KEY, id); } catch (e) { /* storage blocked */ }
+  },
+  /* Question list for a topic id (Latin on any problem). */
+  pool(id) { const p = id === LATIN_ID ? null : this.get(id); return p ? p.questions : LATIN_POOL; }
+};
+
 /* ======================= Latein-Pool-Verwaltung (Spaced Repetition) ======================= */
 const Quiz = {
   weights: [], last: -1, asked: 0, correct: 0, wrongSet: new Map(),
-  reset() { this.weights = LATIN_POOL.map(() => 1); this.last = -1; this.asked = 0; this.correct = 0; this.wrongSet = new Map(); },
+  pool: LATIN_POOL,
+  reset(pool) { this.pool = pool && pool.length ? pool : LATIN_POOL; this.weights = this.pool.map(() => 1); this.last = -1; this.asked = 0; this.correct = 0; this.wrongSet = new Map(); },
   next() {
     let total = 0;
-    const w = this.weights.map((x, i) => (i === this.last && LATIN_POOL.length > 1) ? 0 : x);
+    const w = this.weights.map((x, i) => (i === this.last && this.pool.length > 1) ? 0 : x);
     w.forEach(x => total += x);
     let r = Math.random() * total, idx = 0;
     for (let i = 0; i < w.length; i++) { r -= w[i]; if (r <= 0) { idx = i; break; } }
     this.last = idx;
-    const e = LATIN_POOL[idx];
+    const e = this.pool[idx];
     const order = shuffle(e.options.map((_, i) => i));
     return { idx, question: e.question, options: order.map(i => e.options[i]), correct: order.indexOf(e.correctIndex), explanation: e.explanation };
   },
@@ -598,7 +680,7 @@ let G = null;                  // Spielwelt
 const keys = {};
 
 function newGame() {
-  Quiz.reset();
+  Quiz.reset(Packs.pool(Packs.topic()));
   const L = id => Save.lvl(id), hp = CFG.playerHp + 10 * L('hp');
   G = {
     t: 0, kills: 0, level: 1, xp: 0, xpNeed: CFG.xpBase + CFG.xpPerLevel, pendingLevels: 0,
@@ -1131,7 +1213,7 @@ function showResult(victory) {
   card.appendChild(t);
   if (Quiz.wrongSet.size) {
     const ul = document.createElement('ul'); ul.className = 'wrongs';
-    for (const [idx, n] of Quiz.wrongSet) { const li = document.createElement('li'); li.textContent = LATIN_POOL[idx].explanation + (n > 1 ? ` (${n}×)` : ''); ul.appendChild(li); }
+    for (const [idx, n] of Quiz.wrongSet) { const li = document.createElement('li'); li.textContent = Quiz.pool[idx].explanation + (n > 1 ? ` (${n}×)` : ''); ul.appendChild(li); }
     card.appendChild(ul);
   }
   const rowB = document.createElement('div'); rowB.className = 'row';
@@ -1182,6 +1264,11 @@ function openSettings() {
     <label class="f">Datei im Repo</label><input class="f" id="fPath" autocapitalize="off" spellcheck="false">
     <label class="f">Fine-grained Token (nur dieses Repo, „Contents: Read and write“)</label><input class="f" id="fTok" type="password" autocomplete="off" spellcheck="false">
     <div class="fb" id="fMsg"></div>
+    <h2 style="margin-top:18px;font-size:18px">📚 Lerninhalt</h2>
+    <p class="sub">Lädt eine Lerninhalt-Datei (.json) von diesem Gerät. Der Inhalt bleibt nur auf diesem Gerät.</p>
+    <label class="f" for="packFile">Lerninhalt laden</label><input class="f" id="packFile" type="file" accept=".json,application/json">
+    <div class="fb" id="packReport" role="status"></div>
+    <div id="packDel"></div>
     <div class="row"><button class="big" id="fSave">Speichern & testen</button><button class="big alt" id="fOff">Sync aus</button><button class="big alt" id="fBack">Zurück</button></div>`;
   $('fName').value = Save.data.name || ''; $('fRepo').value = c.repo; $('fPath').value = c.path; $('fTok').value = c.token;
   const msg = (t, ok) => { $('fMsg').className = 'fb ' + (ok ? 'good' : 'bad'); $('fMsg').textContent = t; };
@@ -1196,13 +1283,52 @@ function openSettings() {
   };
   $('fOff').onclick = () => { Save.setCfg(null); Save.syncStatus = ''; $('fTok').value = ''; msg('Online-Sicherung ausgeschaltet. Lokaler Spielstand bleibt erhalten.', true); };
   $('fBack').onclick = () => { $('settings').classList.remove('show'); showStart(); };
+  const report = (t, ok) => { const r = $('packReport'); r.className = 'fb ' + (ok ? 'good' : 'bad'); r.textContent = t; };
+  const renderPackDel = () => {
+    const box = $('packDel'); box.innerHTML = '';
+    Packs.list().forEach(p => {
+      const row = document.createElement('div'); row.className = 'row';
+      const name = document.createElement('span'); name.textContent = p.title + ' (' + p.questions.length + ' Fragen)';
+      const del = document.createElement('button'); del.className = 'big alt'; del.setAttribute('data-delete-pack', p.id); del.textContent = 'Löschen';
+      del.onclick = () => { Packs.remove(p.id); renderPackDel(); renderTopicList(); };
+      row.append(name, del); box.appendChild(row);
+    });
+  };
+  $('packFile').onchange = async ev => {
+    const input = ev.target, file = input.files && input.files[0];
+    $('packReport').textContent = ''; $('packReport').className = 'fb';
+    if (!file) return;
+    if (file.size > PACK_LIMITS.fileChars) { report(PACK_REJECT + 'Die Datei ist zu groß.', false); input.value = ''; return; }
+    let text;
+    try { text = await file.text(); } catch (e) { report(PACK_REJECT + 'Die Datei konnte nicht gelesen werden.', false); input.value = ''; return; }
+    const r = parsePack(text);
+    if (!r.ok) { report(PACK_REJECT + r.error, false); input.value = ''; return; }
+    const sv = Packs.save(r.pack);
+    if (!sv.ok) { report(sv.error, false); input.value = ''; return; }
+    report(r.loaded + ' Fragen geladen, ' + r.skipped + ' übersprungen', true);
+    renderPackDel(); renderTopicList(); input.value = '';
+  };
+  renderPackDel();
   $('settings').classList.add('show');
 }
 
 /* ======================= Startbildschirm ======================= */
 function renderSyncBadge() { const b = $('syncBadge'); if (b) b.textContent = Save.cfg() ? (Save.syncStatus || '☁ Online-Sicherung aktiv') : ''; }
+function renderTopicList() {
+  const box = $('topicList'); box.innerHTML = '';
+  const chosen = Packs.topic();
+  const topics = [{ id: LATIN_ID, title: 'Latein (Salto 1A/1B)' }].concat(Packs.list().map(p => ({ id: p.id, title: p.title })));
+  topics.forEach(t => {
+    const lab = document.createElement('label'); lab.className = 'topic';
+    const inp = document.createElement('input'); inp.type = 'radio'; inp.name = 'topic'; inp.value = t.id; inp.checked = t.id === chosen;
+    inp.onchange = () => { if (inp.checked) Packs.setTopic(t.id); };
+    const span = document.createElement('span'); span.textContent = t.title;
+    lab.append(inp, span); box.appendChild(lab);
+  });
+}
 function showStart() {
   const S = Save.data, info = $('startInfo');
+  renderTopicList();
   info.innerHTML = '';
   if (S.stats.runs > 0) {
     const g = document.createElement('div'); g.className = 'records';

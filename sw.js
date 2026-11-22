@@ -1,5 +1,5 @@
 /* Service Worker: Offline-Start. VERSION wird vom Publish-Job gesetzt (ADR-0005). */
-const VERSION = 'salto-mortale-5e66991';
+const VERSION = 'salto-mortale-f757093';
 const FILES = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(VERSION).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(k => Promise.all(k.filter(x => x !== VERSION).map(x => caches.delete(x)))).then(() => self.clients.claim())); });
