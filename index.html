@@ -22,7 +22,9 @@
     button.opt { padding:16px 14px; font-size:17px; }
     .overlay { align-items:flex-start; overflow:auto; }
   }
-  #hud { position:fixed; top:0; left:0; right:0; padding:10px 14px; display:flex; gap:18px; align-items:center; pointer-events:none; font-size:14px; text-shadow:0 1px 2px #000; }
+  #hud { position:fixed; top:0; left:0; right:0; padding:10px 54px 10px 14px; display:flex; gap:18px; align-items:center; pointer-events:none; font-size:14px; text-shadow:0 1px 2px #000; }
+  #diagBtn { position:fixed; top:6px; right:8px; z-index:11; display:none; width:38px; height:34px; padding:0; font-size:18px; line-height:1; background:#000a; color:var(--gold); border:1px solid var(--line); border-radius:8px; cursor:pointer; }
+  body.run #diagBtn { display:block; }
   .bar { position:relative; width:200px; height:16px; background:#000a; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
   .bar > i { position:absolute; inset:0 auto 0 0; width:100%; }
   #hpFill { background:var(--hp); } #xpFill { background:var(--xp); }
@@ -30,6 +32,9 @@
   .stat b { color:var(--gold); }
   .overlay { position:fixed; inset:0; background:#000c; display:none; align-items:center; justify-content:center; padding:16px; z-index:10; }
   .overlay.show { display:flex; }
+  #diag { z-index:20; }
+  #diagText { width:100%; box-sizing:border-box; height:42vh; min-height:120px; background:#0d0d1a; color:#d8d8f0; border:1px solid var(--line); border-radius:8px; padding:8px; font:12px/1.4 monospace; resize:vertical; }
+  #diag .row { margin-top:12px; }
   #topicList { margin:10px 0; } #topicList label.topic { display:flex; align-items:center; gap:8px; padding:6px 0; font-size:16px; cursor:pointer; } #topicList input { width:20px; height:20px; }
   #packDel .row { align-items:center; margin:6px 0; } #packDel span { flex:1; overflow-wrap:anywhere; }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:22px; width:min(640px,100%); max-height:94vh; overflow:auto; box-shadow:0 10px 40px #000; }
@@ -105,6 +110,8 @@
   <div class="stat">Denare <b id="den">0</b></div>
 </div>
 
+<button id="diagBtn" title="Diagnose" aria-label="Diagnose">🩺</button>
+
 <div class="overlay show" id="start">
   <div class="card">
     <h1>Salto Mortale</h1>
@@ -129,6 +136,14 @@
 <div class="overlay" id="settings"><div class="card" id="setCard"></div></div>
 <div class="overlay" id="modal"><div class="card" id="modalCard"></div></div>
 <div class="overlay" id="over"><div class="card" id="overCard"></div></div>
+<div class="overlay" id="diag"><div class="card">
+  <h2>🩺 Diagnose</h2>
+  <p class="sub">Dieser Bericht bleibt nur auf diesem Gerät. Mit „Kopieren“ kannst du ihn weitergeben.</p>
+  <textarea id="diagText" readonly spellcheck="false" aria-label="Diagnosebericht"></textarea>
+  <div class="fb good" id="diagConfirm" role="status" hidden>✔ Bericht kopiert.</div>
+  <div class="fb bad" id="diagHint" role="status" hidden>Kopieren nicht möglich. Der Text ist markiert: lange auf den Text tippen und „Kopieren“ wählen.</div>
+  <div class="row"><button class="big" id="diagCopy">Bericht kopieren</button><button class="big alt" id="diagClose">Schließen</button></div>
+</div></div>
 
 <script>
 /* ======================================================================
@@ -436,13 +451,98 @@ const SEAMS = {
   noXp: false,            // true: collecting a gem adds no XP
   forceEnemyType: null,   // 'skel' | 'leg': spawnEnemy() uses this type without a random draw
   manualTimers: false,    // true: answer timers are queued in pendingTimers; runTimers() runs them
-  pendingTimers: []
+  pendingTimers: [],
+  watchdogMs: 3000        // the frame watchdog reports a frame loop that drew nothing for this long (tests shorten it)
 };
 // Called at openLevelUp() and endGame() with no arguments. A hook that returns true replaces the
 // default behaviour (the hook then sets state itself). Empty in the game.
 const HOOKS = {};
 function schedule(fn, ms) { if (SEAMS.manualTimers) SEAMS.pendingTimers.push({ fn, ms }); else setTimeout(fn, ms); }
 function runTimers() { const q = SEAMS.pendingTimers; SEAMS.pendingTimers = []; for (const t of q) t.fn(); }
+
+/* ======================= Diagnosis (issue #72, finding #30) =======================
+   Error capture, event log (last 50 events: only types and play time) and a copyable report window.
+   Privacy: the report holds no player name, sync data or pack text; the event log stores types and times only. */
+const dq = id => document.getElementById(id);   // `$` is defined further down
+let lastFrameAt = performance.now(), watchdogFired = false, runUi = false;   // frame watchdog and diagnosis button state (declared before first use)
+const Diag = {
+  events: [], errors: [], version: 'unknown', shown: false,
+  /** Records one game event with the play time; the only thing the game hooks call. */
+  log(type) { const a = this.events; if (a.length >= 50) a.shift(); a.push({ t: G ? G.t : 0, type }); },
+  /** Reports an error: pauses a running game, shows the one report window and updates it live. */
+  error(message, place) {
+    try {
+      message = String(message).slice(0, 300); place = place || 'place unknown';
+      const last = this.errors[this.errors.length - 1];
+      if (last && last.message === message && last.place === place) {   // the same error every frame: count it, do not flood
+        last.n++; if (last.n & (last.n - 1)) return;
+      } else if (this.errors.length < 20) this.errors.push({ message, place, n: 1 });
+      this.open();
+    } catch (e) { /* the diagnosis must never throw itself */ }
+  },
+  /** Place of an error: "file:line:col" from the event, else the first position of the stack, else "line N". */
+  place(src, line, col, err) {
+    const base = u => String(u || '').split(/[?#]/)[0].split('/').pop() || 'index.html';
+    if (line) return col ? `${base(src)}:${line}:${col}` : `${base(src)} line ${line}`;
+    const m = /([^\s()@]*):(\d+):(\d+)/.exec(err && err.stack || '');
+    if (m) return `${base(m[1])}:${m[2]}:${m[3]}`;
+    return 'place unknown' + (err && err.stack ? ' (' + String(err.stack).split('\n')[0].slice(0, 120) + ')' : '');
+  },
+  /** Shows the report window; a running game is paused (resumed by close when no error was caught). */
+  open() {
+    if (!this.shown) { this.shown = true; if (state === 'play') state = 'pause'; dq('diagConfirm').hidden = true; dq('diagHint').hidden = true; }
+    this.refresh(); dq('diag').classList.add('show');
+  },
+  refresh() { if (this.shown) dq('diagText').value = this.report(); },
+  close() {
+    const hadError = this.errors.length > 0;
+    this.errors = []; this.shown = false; lastFrameAt = performance.now(); watchdogFired = false; dq('diag').classList.remove('show');
+    if (state === 'pause' && !hadError) { state = 'play'; last = performance.now(); }
+    else if (hadError && G && (state === 'pause' || state === 'quiz')) { try { showResult(false); } catch (e) { state = 'over'; } }   // not stuck: the Game Over card has "Neustart"
+  },
+  /** The report text (English, fixed headings ERRORS, EVENTS, DEVICE). */
+  report() {
+    const f1 = x => (Math.round(x * 10) / 10).toFixed(1);
+    const out = ['Salto Mortale diagnostic report', 'ERRORS'];
+    if (!this.errors.length) out.push('no error caught');
+    for (const e of this.errors) out.push(`${e.message} @ ${e.place}` + (e.n > 1 ? ` (x${e.n})` : ''));
+    out.push('EVENTS');
+    if (!this.events.length) out.push('(none)');
+    for (const e of this.events) out.push(`${f1(e.t)}s ${e.type}`);
+    out.push('DEVICE', `version: ${this.version}`, `user agent: ${navigator.userAgent}`,
+      `screen: ${screen.width}x${screen.height}`, `window: ${innerWidth}x${innerHeight}`, `pixel ratio: ${window.devicePixelRatio}`,
+      'shop: ' + SHOP.map(it => `${it.id}=${Save.lvl(it.id)}`).join(' '),
+      `game: state=${state}` + (G ? `, play time=${f1(G.t)}s, enemies=${G.enemies.length}, level=${G.level}` : ''));
+    let text = out.join('\n');
+    try {   // safety net: never show saved personal data, even inside an error message
+      const c = Save.cfg() || {};
+      for (const v of [Save.data.name, c.repo, c.token]) if (typeof v === 'string' && v.length >= 4) text = text.split(v).join('***');
+    } catch (e) { /* ignore */ }
+    return text;
+  }
+};
+// Version: the game has no version string; the cache name of the service worker (sw.js VERSION) is read once at page load.
+try { caches.keys().then(k => { const v = k.filter(n => n.startsWith('salto-mortale')).join(','); if (v) { Diag.version = v; Diag.refresh(); } }).catch(() => {}); } catch (e) { /* no Cache API */ }
+{
+  const prev = window.onerror;
+  window.onerror = function (msg, src, line, col, err) {
+    try { Diag.error(msg, Diag.place(src, line, col, err)); } catch (e) { /* ignore */ }
+    return typeof prev === 'function' ? prev.apply(this, arguments) : undefined;
+  };
+}
+addEventListener('unhandledrejection', ev => {
+  const r = ev.reason;
+  Diag.error('Unhandled rejection: ' + (r && r.message || String(r)), Diag.place('', 0, 0, r));
+});
+dq('diagBtn').onclick = () => Diag.open();
+dq('diagClose').onclick = () => Diag.close();
+dq('diagCopy').onclick = () => {
+  const el = dq('diagText'), text = el.value; dq('diagConfirm').hidden = true; dq('diagHint').hidden = true;
+  const select = () => { el.focus(); el.select(); el.setSelectionRange(0, el.value.length); };
+  let p;
+  try { p = navigator.clipboard.writeText(text); } catch (e) { p = Promise.reject(e); }
+  Promise.resolve(p).then(() => { $('diagConfirm').hidden = false; }, () => { select(); $('diagHint').hidden = false; });
+};
 
 /* ======================= Upgrades ======================= */
 const UPGRADES = [
@@ -694,6 +794,7 @@ function newGame() {
   };
   nextBanner();   // empty queue: hides a banner left from the previous run
   updateHud();
+  Diag.events.length = 0; Diag.log('run-start');
 }
 
 /* ======================= Eingabe ======================= */
@@ -800,7 +901,7 @@ function spawnBoss() {
   const bc = CFG.boss, { x, y } = edgePoint();
   const b = { type: 'boss', x, y, r: bc.radius, hp: bc.hp, maxHp: bc.hp, speed: bc.speed, dmg: bc.damage, hit: 0, xp: 0,
               phase: 'walk', phaseT: 0, dashCd: bc.dashInterval, dashLeft: 0, dashHit: false, lane: null };
-  G.enemies.push(b); G.boss = b;
+  G.enemies.push(b); G.boss = b; Diag.log('boss-appears');
 }
 function startDashWarning(e) {
   const bc = CFG.boss, p = G.p, d = Math.hypot(p.x - e.x, p.y - e.y) || 1;
@@ -1063,7 +1164,7 @@ $('bossWarning').textContent = CFG.boss.warningText; $('dashCue').textContent = 
 let quizHandler = null;
 function openLevelUp() {
   if (HOOKS.levelUp && HOOKS.levelUp() === true) return;
-  state = 'quiz';
+  state = 'quiz'; Diag.log('level-up');
   for (const k in keys) keys[k] = false;       // keine "hängenden" Tasten
   joyReset();                                   // Joystick loslassen
   G.pendingLevels--;
@@ -1086,6 +1187,7 @@ function openLevelUp() {
 }
 
 function askQuestion(upgrade) {
+  Diag.log('upgrade-pick');
   const q = Quiz.next(), card = $('modalCard'); card.innerHTML = '';
   const h = document.createElement('h2'); h.textContent = 'Upgrade: ' + upgrade.name;
   const qq = document.createElement('div'); qq.className = 'q'; qq.textContent = q.question;
@@ -1117,7 +1219,7 @@ function askQuestion(upgrade) {
     if (done || i < 0 || i >= q.options.length || btns[i].disabled) return; done = true; quizHandler = null; jokerHandler = null;
     btns.forEach(b => b.disabled = true);
     const ok = i === q.correct;
-    Quiz.answered(q.idx, ok);
+    Quiz.answered(q.idx, ok); Diag.log(ok ? 'answer-right' : 'answer-wrong');
     btns[q.correct].classList.add('right');
     if (ok) {
       G.streak++; G.bestStreak = Math.max(G.bestStreak, G.streak);
@@ -1126,7 +1228,7 @@ function askQuestion(upgrade) {
       fb.className = 'fb good'; fb.textContent = `✔ Richtig! +${coins} Denare. ` + q.explanation;
       if (G.streak % 3 === 0) {
         const bonus = drawComboBonus(upgrade);
-        bonus.apply(G.p); G.pendingBlitz = true;
+        bonus.apply(G.p); G.pendingBlitz = true; Diag.log('combo-bonus');
         const cb = document.createElement('div'); cb.className = 'combo';
         cb.textContent = `⚡ COMBO ×${G.streak}! Bonus-Upgrade: ${bonus.name} + Jupiters Blitz!`;
         card.insertBefore(cb, fb); Sound.combo();
@@ -1148,7 +1250,7 @@ let jokerHandler = null;
 
 /* Combo-Belohnung: Blitz trifft alle Gegner auf dem Bildschirm */
 function jupiterBlitz() {
-  const p = G.p;
+  const p = G.p; Diag.log('jupiters-blitz');
   for (const e of G.enemies) {
     damageEnemy(e, e.type === 'boss' ? e.maxHp * CFG.boss.blitzFraction : e.maxHp * 0.7 + 10);
     G.bolts.push({ x: e.x, y: e.y, life: .3 });
@@ -1173,7 +1275,8 @@ function endGame() {
 }
 /** Shared result card of a lost run (victory = false) and of a won run (victory = true). */
 function showResult(victory) {
-  state = 'over'; $('modal').classList.remove('show'); quizHandler = null; jokerHandler = null; G.pendingLevels = 0; G.pendingBlitz = false;
+  Diag.log('run-end');
+  state = 'over'; setRunUi(false); $('modal').classList.remove('show'); quizHandler = null; jokerHandler = null; G.pendingLevels = 0; G.pendingBlitz = false;
   const rate = Quiz.asked ? Math.round(Quiz.correct / Quiz.asked * 100) : 0;
   // Denare abrechnen & Rekorde prüfen
   const fromKills = Math.floor(G.kills / 10), fromTime = 2 * Math.floor(G.t / 60);
@@ -1269,7 +1372,7 @@ function openSettings() {
     <label class="f" for="packFile">Lerninhalt laden</label><input class="f" id="packFile" type="file" accept=".json,application/json">
     <div class="fb" id="packReport" role="status"></div>
     <div id="packDel"></div>
-    <div class="row"><button class="big" id="fSave">Speichern & testen</button><button class="big alt" id="fOff">Sync aus</button><button class="big alt" id="fBack">Zurück</button></div>`;
+    <div class="row"><button class="big" id="fSave">Speichern & testen</button><button class="big alt" id="fOff">Sync aus</button><button class="big alt" id="diagSetBtn">🩺 Diagnose</button><button class="big alt" id="fBack">Zurück</button></div>`;
   $('fName').value = Save.data.name || ''; $('fRepo').value = c.repo; $('fPath').value = c.path; $('fTok').value = c.token;
   const msg = (t, ok) => { $('fMsg').className = 'fb ' + (ok ? 'good' : 'bad'); $('fMsg').textContent = t; };
   $('fSave').onclick = async () => {
@@ -1282,6 +1385,7 @@ function openSettings() {
     catch (e) { msg('✘ Verbindung fehlgeschlagen (' + e.message + '). 401 = Token falsch, 404 = Repo falsch oder Token hat keinen Zugriff.', false); }
   };
   $('fOff').onclick = () => { Save.setCfg(null); Save.syncStatus = ''; $('fTok').value = ''; msg('Online-Sicherung ausgeschaltet. Lokaler Spielstand bleibt erhalten.', true); };
+  $('diagSetBtn').onclick = () => Diag.open();
   $('fBack').onclick = () => { $('settings').classList.remove('show'); showStart(); };
   const report = (t, ok) => { const r = $('packReport'); r.className = 'fb ' + (ok ? 'good' : 'bad'); r.textContent = t; };
   const renderPackDel = () => {
@@ -1327,6 +1431,7 @@ function renderTopicList() {
   });
 }
 function showStart() {
+  setRunUi(false);
   const S = Save.data, info = $('startInfo');
   renderTopicList();
   info.innerHTML = '';
@@ -1352,14 +1457,32 @@ if (Save.cfg()) Save.pull().then(r => { if (r === 'geladen') Save.syncStatus = '
 
 /* ======================= Hauptschleife (requestAnimationFrame + Delta-Time) ======================= */
 let last = performance.now();
+/** Shows the diagnosis button (class "run" on body) while a run is going; the frame loop switches it on, a result or the start screen off. */
+function setRunUi(on) { runUi = on; document.body.classList.toggle('run', on); }
 function frame(now) {
-  const dt = Math.min(0.05, (now - last) / 1000); last = now;
-  if (!SEAMS.loop) { requestAnimationFrame(frame); return; }
-  if (state === 'play') update(dt);
-  draw();
+  lastFrameAt = now; watchdogFired = false;   // per-frame cost of the watchdog: this assignment
+  if (!runUi && state === 'play') setRunUi(true);
+  try {   // an error in update or draw is reported (Diag) and does not stop the loop silently
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    if (SEAMS.loop) {
+      if (state === 'play') update(dt);
+      draw();
+    }
+  } catch (e) { Diag.error(e && e.message || String(e), Diag.place('', 0, 0, e)); }
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+// Watchdog (setInterval, not rAF: it must run when the frame loop is dead): a running game that drew no frame for
+// SEAMS.watchdogMs while the page is visible is reported once (a frozen loop throws no error).
+setInterval(() => {
+  if (watchdogFired || !SEAMS.loop || state !== 'play' || document.visibilityState !== 'visible') return;
+  const now = performance.now();
+  if (now - lastFrameAt < SEAMS.watchdogMs) return;
+  watchdogFired = true;
+  Diag.error(`frame loop stopped: no frame drawn for ${((now - lastFrameAt) / 1000).toFixed(1)} s, last frame at page time ${(lastFrameAt / 1000).toFixed(1)} s` +
+    (G ? ` (play time ${G.t.toFixed(1)} s)` : ''), 'watchdog');
+}, 250);
+document.addEventListener('visibilitychange', () => { lastFrameAt = performance.now(); watchdogFired = false; });
 
 /* PWA: Service Worker für Offline-Start (nur über https/localhost) */
 if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
